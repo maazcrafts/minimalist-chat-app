@@ -10,6 +10,7 @@ const db = require('./database');
 const jwt = require('jsonwebtoken');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-key-1234';
+const ADMIN_USERNAME = 'maaz_khan';
 
 const app = express();
 app.use(cors());
@@ -26,6 +27,193 @@ app.get('/api/admin/users', (req, res) => {
         res.json(rows || []);
     } catch (err) {
         return res.status(500).json({ error: 'Database error' });
+    }
+});
+
+// Admin dashboard APIs (authenticated)
+app.get('/api/admin/dashboard/stats', authenticateToken, requireAdmin, (req, res) => {
+    try {
+        const totalUsers = db.prepare('SELECT COUNT(*) as c FROM users WHERE username != ?').get('__system__').c;
+        const totalMessages = db.prepare('SELECT COUNT(*) as c FROM messages').get().c;
+        const totalGroups = db.prepare('SELECT COUNT(*) as c FROM groups').get().c;
+        const activeUsersToday = db.prepare("SELECT COUNT(DISTINCT id) as c FROM users WHERE last_seen >= datetime('now','-1 day') AND username != ?").get('__system__').c;
+
+        const days = 14;
+        const messagesPerDay = db.prepare(`
+            SELECT date(timestamp) as day, COUNT(*) as count
+            FROM messages
+            WHERE timestamp >= datetime('now', ?)
+            GROUP BY date(timestamp)
+            ORDER BY day ASC
+        `).all(`-${days} day`);
+
+        const signupsPerDay = db.prepare(`
+            SELECT date(created_at) as day, COUNT(*) as count
+            FROM users
+            WHERE created_at >= datetime('now', ?) AND username != ?
+            GROUP BY date(created_at)
+            ORDER BY day ASC
+        `).all(`-${days} day`, '__system__');
+
+        res.json({
+            totals: { users: totalUsers, messages: totalMessages, groups: totalGroups, activeUsersToday },
+            series: { messagesPerDay, signupsPerDay }
+        });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Database error' });
+    }
+});
+
+app.get('/api/admin/dashboard/settings', authenticateToken, requireAdmin, (req, res) => {
+    res.json({
+        maintenance_mode: getSetting('maintenance_mode', 'false') === 'true',
+        invite_only: getSetting('invite_only', 'false') === 'true',
+        welcome_message: getSetting('welcome_message', 'Welcome to MaazX')
+    });
+});
+
+app.put('/api/admin/dashboard/settings', authenticateToken, requireAdmin, (req, res) => {
+    try {
+        const { maintenance_mode, invite_only, welcome_message } = req.body || {};
+        if (typeof maintenance_mode === 'boolean') setSetting('maintenance_mode', maintenance_mode ? 'true' : 'false');
+        if (typeof invite_only === 'boolean') setSetting('invite_only', invite_only ? 'true' : 'false');
+        if (typeof welcome_message === 'string') setSetting('welcome_message', welcome_message.slice(0, 200));
+        res.json({ ok: true });
+    } catch (err) {
+        return res.status(500).json({ error: 'Failed to update settings' });
+    }
+});
+
+app.get('/api/admin/dashboard/users', authenticateToken, requireAdmin, (req, res) => {
+    try {
+        const rows = db.prepare(`
+            SELECT id, username, role, banned, created_at, last_seen
+            FROM users
+            WHERE username != ?
+            ORDER BY created_at DESC, id DESC
+        `).all('__system__') || [];
+
+        const enriched = rows.map(u => {
+            const room = io.sockets.adapter.rooms.get(`user_${u.id}`);
+            const online = room && room.size > 0;
+            return { ...u, online: !!online };
+        });
+
+        res.json(enriched);
+    } catch (err) {
+        return res.status(500).json({ error: 'Database error' });
+    }
+});
+
+app.post('/api/admin/dashboard/users/:id/ban', authenticateToken, requireAdmin, (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const banned = !!req.body?.banned;
+        db.prepare('UPDATE users SET banned = ? WHERE id = ? AND username != ?').run(banned ? 1 : 0, id, ADMIN_USERNAME);
+        res.json({ ok: true });
+    } catch (err) {
+        return res.status(500).json({ error: 'Failed to update user' });
+    }
+});
+
+app.delete('/api/admin/dashboard/users/:id', authenticateToken, requireAdmin, (req, res) => {
+    const id = Number(req.params.id);
+    try {
+        const userRow = db.prepare('SELECT id, username FROM users WHERE id = ?').get(id);
+        if (!userRow) return res.status(404).json({ error: 'User not found' });
+        if (userRow.username === ADMIN_USERNAME || userRow.username === '__system__') return res.status(400).json({ error: 'Cannot delete this user' });
+
+        const tx = db.transaction(() => {
+            db.prepare('DELETE FROM message_reactions WHERE user_id = ?').run(id);
+            db.prepare('DELETE FROM contacts WHERE user_id = ? OR friend_id = ?').run(id, id);
+            db.prepare('DELETE FROM friend_requests WHERE sender_id = ? OR receiver_id = ?').run(id, id);
+            db.prepare('DELETE FROM group_members WHERE user_id = ?').run(id);
+            db.prepare('DELETE FROM messages WHERE sender_id = ? OR receiver_id = ?').run(id, id);
+            db.prepare('DELETE FROM users WHERE id = ?').run(id);
+        });
+        tx();
+
+        res.json({ ok: true });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Failed to delete user' });
+    }
+});
+
+app.get('/api/admin/dashboard/messages', authenticateToken, requireAdmin, (req, res) => {
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit || 100)));
+    try {
+        const rows = db.prepare(`
+            SELECT m.id, m.sender_id, su.username as sender_username,
+                   m.receiver_id, ru.username as receiver_username,
+                   m.group_id, g.name as group_name,
+                   m.type, m.content, m.image_url, m.timestamp
+            FROM messages m
+            LEFT JOIN users su ON su.id = m.sender_id
+            LEFT JOIN users ru ON ru.id = m.receiver_id
+            LEFT JOIN groups g ON g.id = m.group_id
+            ORDER BY m.timestamp DESC
+            LIMIT ?
+        `).all(limit) || [];
+        res.json(rows);
+    } catch (err) {
+        return res.status(500).json({ error: 'Database error' });
+    }
+});
+
+app.delete('/api/admin/dashboard/messages/:id', authenticateToken, requireAdmin, (req, res) => {
+    const messageId = Number(req.params.id);
+    try {
+        db.prepare('DELETE FROM message_reactions WHERE message_id = ?').run(messageId);
+        db.prepare('DELETE FROM messages WHERE id = ?').run(messageId);
+        res.json({ ok: true });
+    } catch (err) {
+        return res.status(500).json({ error: 'Failed to delete message' });
+    }
+});
+
+app.post('/api/admin/dashboard/broadcast', authenticateToken, requireAdmin, (req, res) => {
+    try {
+        const content = String(req.body?.content || '').trim();
+        if (!content) return res.status(400).json({ error: 'Message required' });
+        if (!systemUser) return res.status(500).json({ error: 'System user not available' });
+
+        const users = db.prepare('SELECT id FROM users WHERE username != ?').all('__system__') || [];
+        const stmt = db.prepare("INSERT INTO messages (sender_id, receiver_id, group_id, content, type, status) VALUES (?, ?, NULL, ?, 'system', 'sent')");
+        const insertMany = db.transaction((rows) => {
+            for (const u of rows) {
+                if (u.id === systemUser.id) continue;
+                stmt.run(systemUser.id, u.id, content);
+            }
+        });
+        insertMany(users);
+
+        // Deliver in real-time to online users
+        for (const u of users) {
+            if (u.id === systemUser.id) continue;
+            const room = io.sockets.adapter.rooms.get(`user_${u.id}`);
+            const online = room && room.size > 0;
+            if (online) {
+                io.to(`user_${u.id}`).emit('receive_message', {
+                    id: null,
+                    sender_id: systemUser.id,
+                    sender_username: systemUser.username,
+                    receiver_id: u.id,
+                    group_id: null,
+                    content,
+                    image_url: null,
+                    type: 'system',
+                    status: 'sent',
+                    timestamp: new Date().toISOString(),
+                    reactions: []
+                });
+            }
+        }
+        res.json({ ok: true });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Failed to broadcast' });
     }
 });
 
@@ -60,19 +248,63 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
+const requireAdmin = (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: 'Access denied' });
+    if (req.user.username === ADMIN_USERNAME || req.user.role === 'admin') return next();
+    return res.status(403).json({ error: 'Admin access required' });
+};
+
+const getSetting = (key, fallback) => {
+    try {
+        const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(key);
+        if (!row || row.value === null || row.value === undefined) return fallback;
+        return row.value;
+    } catch (_) {
+        return fallback;
+    }
+};
+
+const setSetting = (key, value) => {
+    db.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+      .run(key, value);
+};
+
+const ensureSystemUser = () => {
+    try {
+        let row = db.prepare('SELECT id, username, role FROM users WHERE username = ?').get('__system__');
+        if (!row) {
+            const hash = bcrypt.hashSync('system', 10);
+            const info = db.prepare("INSERT INTO users (username, password_hash, role, banned) VALUES (?, ?, 'system', 0)").run('__system__', hash);
+            row = { id: info.lastInsertRowid, username: '__system__', role: 'system' };
+        }
+        return row;
+    } catch (err) {
+        console.error('Failed to ensure system user:', err.message);
+        return null;
+    }
+};
+
+const systemUser = ensureSystemUser();
+
 // REST API Routes
 // Register
 app.post('/api/auth/register', (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
 
+    const inviteOnly = getSetting('invite_only', 'false') === 'true';
+    if (inviteOnly && username !== ADMIN_USERNAME) {
+        return res.status(403).json({ error: 'Registrations are currently invite-only' });
+    }
+
     bcrypt.hash(password, 10, (err, hash) => {
         if (err) return res.status(500).json({ error: 'Server error hashing password' });
         
         try {
-            const info = db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(username, hash);
-            const token = jwt.sign({ id: info.lastInsertRowid, username }, JWT_SECRET, { expiresIn: '7d' });
-            res.json({ id: info.lastInsertRowid, username, token });
+            const role = username === ADMIN_USERNAME ? 'admin' : 'user';
+            const info = db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)').run(username, hash, role);
+            const token = jwt.sign({ id: info.lastInsertRowid, username, role }, JWT_SECRET, { expiresIn: '30d' });
+            res.json({ id: info.lastInsertRowid, username, role, token });
         } catch (err) {
             if (err.message.includes('UNIQUE')) return res.status(400).json({ error: 'Username already exists' });
             return res.status(500).json({ error: 'Database error' });
@@ -86,17 +318,34 @@ app.post('/api/auth/login', (req, res) => {
     try {
         const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
         if (!user) return res.status(400).json({ error: 'User not found' });
+        if (user.banned) return res.status(403).json({ error: 'Account is banned' });
 
         bcrypt.compare(password, user.password_hash, (err, result) => {
             if (err) return res.status(500).json({ error: 'Server error comparing password' });
             if (!result) return res.status(400).json({ error: 'Invalid password' });
             
-            const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
-            res.json({ id: user.id, username: user.username, token });
+            const role = user.username === ADMIN_USERNAME ? 'admin' : (user.role || 'user');
+            const token = jwt.sign({ id: user.id, username: user.username, role }, JWT_SECRET, { expiresIn: '30d' });
+            res.json({ id: user.id, username: user.username, role, token });
         });
     } catch (err) {
         return res.status(500).json({ error: 'Database error' });
     }
+});
+
+// Public settings for client UX (welcome text, maintenance, invite-only)
+app.get('/api/settings/public', (req, res) => {
+    res.json({
+        maintenance_mode: getSetting('maintenance_mode', 'false') === 'true',
+        invite_only: getSetting('invite_only', 'false') === 'true',
+        welcome_message: getSetting('welcome_message', 'Welcome to MaazX')
+    });
+});
+
+// System info for broadcast/system messages
+app.get('/api/system/info', authenticateToken, (req, res) => {
+    if (!systemUser) return res.status(500).json({ error: 'System user not available' });
+    res.json({ id: systemUser.id, username: systemUser.username });
 });
 
 // Get Contacts
@@ -281,6 +530,10 @@ io.on('connection', (socket) => {
     // For now we trust the emit join logic since socket does not hit REST routes unless logged in.
     socket.on('join', (userId) => {
         socket.join(`user_${userId}`);
+
+        try {
+            db.prepare("UPDATE users SET last_seen = datetime('now') WHERE id = ?").run(userId);
+        } catch (_) {}
         
         try {
             const rows = db.prepare('SELECT group_id FROM group_members WHERE user_id = ?').all(userId);

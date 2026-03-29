@@ -3,11 +3,12 @@ import axios from 'axios';
 
 const API_URL = 'https://minimalist-chat-app.onrender.com/api/auth';
 
-const AuthPage = ({ setUser }) => {
+const AuthPage = ({ setUser, publicSettings }) => {
   const [isLogin, setIsLogin] = useState(true);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const inviteOnly = !!publicSettings?.invite_only;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -30,7 +31,7 @@ const AuthPage = ({ setUser }) => {
       <div className="auth-card">
         <div className="auth-header">
           <h1>[MaazX]</h1>
-          <p>{isLogin ? 'Welcome Back - Sign in to connect' : 'Create Account - Sign up to chat'}</p>
+          <p>{publicSettings?.welcome_message || (isLogin ? 'Welcome Back - Sign in to connect' : 'Create Account - Sign up to chat')}</p>
         </div>
 
         {error && <div className="error-text">{error}</div>}
@@ -71,6 +72,11 @@ const AuthPage = ({ setUser }) => {
             {isLogin ? 'Sign Up' : 'Sign In'}
           </span>
         </div>
+        {!isLogin && inviteOnly && (
+          <div className="error-text" style={{ marginTop: 12 }}>
+            Registrations are currently invite-only.
+          </div>
+        )}
         <div style={{ marginTop: '30px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>
           Created by Maaz
         </div>

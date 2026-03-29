@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { io } from 'socket.io-client';
-import { Send, UserPlus, LogOut, Users, Image as ImageIcon, X, Check, CheckCheck, CheckCircle, XCircle, ArrowLeft, Mic, Reply as ReplyIcon, Smile, Play, Pause } from 'lucide-react';
+import { Send, UserPlus, LogOut, Users, Image as ImageIcon, X, Check, CheckCheck, CheckCircle, XCircle, ArrowLeft, Mic, Reply as ReplyIcon, Smile, Play, Pause, Shield } from 'lucide-react';
 import EmojiPicker from 'emoji-picker-react';
 
 const API_URL = 'https://minimalist-chat-app.onrender.com/api';
@@ -54,6 +54,7 @@ const ChatDashboard = ({ user, setUser }) => {
   const [emojiPickerFor, setEmojiPickerFor] = useState(null); // messageId
   const [emojiPickerAnchor, setEmojiPickerAnchor] = useState(null); // { x, y }
   const emojiPickerHoverRef = useRef(false);
+  const [systemUser, setSystemUser] = useState(null);
 
   const AudioPlayer = ({ src, compact = false }) => {
     const audioRef = useRef(null);
@@ -199,6 +200,10 @@ const ChatDashboard = ({ user, setUser }) => {
     fetchGroups();
     fetchRequests();
 
+    axios.get(`${ORIGIN_URL}/api/system/info`).then((res) => {
+      setSystemUser(res.data);
+    }).catch(() => {});
+
     socket = io(ORIGIN_URL);
     socket.emit('join', user.id);
 
@@ -282,7 +287,9 @@ const ChatDashboard = ({ user, setUser }) => {
   const fetchContacts = async () => {
     try {
       const res = await axios.get(`${API_URL}/contacts/${user.id}`);
-      setContacts(res.data);
+      const base = res.data || [];
+      const adminContact = systemUser ? [{ id: systemUser.id, username: 'Announcements', is_system: true }, ...base] : base;
+      setContacts(adminContact);
       try { localStorage.setItem(`chat_contacts_${user.id}`, JSON.stringify(res.data)); } catch (_) {}
     } catch (err) { console.error(err); }
   };
@@ -635,9 +642,16 @@ const ChatDashboard = ({ user, setUser }) => {
               </div>
               <h2>MaazX</h2>
             </div>
-            <button className="logout-btn" onClick={handleLogout} title="Log Out">
-              <LogOut size={18} />
-            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {(user.username === 'maaz_khan' || user.role === 'admin') && (
+                <a className="logout-btn" href="/admin" title="Admin">
+                  <Shield size={18} />
+                </a>
+              )}
+              <button className="logout-btn" onClick={handleLogout} title="Log Out">
+                <LogOut size={18} />
+              </button>
+            </div>
           </div>
           
           <form className="add-friend-form" onSubmit={handleAddFriend}>
