@@ -39,21 +39,21 @@ app.post('/api/auth/register', (req, res) => {
     bcrypt.hash(password, 10, (err, hash) => {
         if (err) return res.status(500).json({ error: 'Server error hashing password' });
         
-        db.run('INSERT INTO users (username, password_hash) VALUES (?, ?)', [username, hash], function(err) {
-            if (err) {
-                if (err.message.includes('UNIQUE')) return res.status(400).json({ error: 'Username already exists' });
-                return res.status(500).json({ error: 'Database error' });
-            }
-            res.json({ id: this.lastID, username });
-        });
+        try {
+            const info = db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(username, hash);
+            res.json({ id: info.lastInsertRowid, username });
+        } catch (err) {
+            if (err.message.includes('UNIQUE')) return res.status(400).json({ error: 'Username already exists' });
+            return res.status(500).json({ error: 'Database error' });
+        }
     });
 });
 
 // Login
 app.post('/api/auth/login', (req, res) => {
     const { username, password } = req.body;
-    db.get('SELECT * FROM users WHERE username = ?', [username], (err, user) => {
-        if (err) return res.status(500).json({ error: 'Database error' });
+    try {
+        const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
         if (!user) return res.status(400).json({ error: 'User not found' });
 
         bcrypt.compare(password, user.password_hash, (err, result) => {
@@ -62,7 +62,9 @@ app.post('/api/auth/login', (req, res) => {
             
             res.json({ id: user.id, username: user.username });
         });
-    });
+    } catch (err) {
+        return res.status(500).json({ error: 'Database error' });
+    }
 });
 
 // Get Contacts
@@ -74,30 +76,29 @@ app.get('/api/contacts/:userId', (req, res) => {
         JOIN users u ON c.friend_id = u.id
         WHERE c.user_id = ?
     `;
-    db.all(query, [userId], (err, rows) => {
-        if (err) return res.status(500).json({ error: 'Database error' });
+    try {
+        const rows = db.prepare(query).all(userId);
         res.json(rows || []);
-    });
+    } catch (err) {
+        return res.status(500).json({ error: 'Database error' });
+    }
 });
 
 // Add Contact
 app.post('/api/contacts/add', (req, res) => {
     const { userId, friendUsername } = req.body;
-    db.get('SELECT id, username FROM users WHERE username = ?', [friendUsername], (err, friend) => {
-        if (err) return res.status(500).json({ error: 'Database error' });
+    try {
+        const friend = db.prepare('SELECT id, username FROM users WHERE username = ?').get(friendUsername);
         if (!friend) return res.status(404).json({ error: 'User not found' });
         if (friend.id === parseInt(userId)) return res.status(400).json({ error: 'Cannot add yourself' });
 
-        db.run('INSERT INTO contacts (user_id, friend_id) VALUES (?, ?)', [userId, friend.id], (err) => {
-            if (err) {
-                if (err.message.includes('UNIQUE')) return res.status(400).json({ error: 'Already contacts' });
-                return res.status(500).json({ error: 'Database error' });
-            }
-            db.run('INSERT OR IGNORE INTO contacts (user_id, friend_id) VALUES (?, ?)', [friend.id, userId], (err) => {
-                res.json({ id: friend.id, username: friend.username });
-            });
-        });
-    });
+        db.prepare('INSERT INTO contacts (user_id, friend_id) VALUES (?, ?)').run(userId, friend.id);
+        db.prepare('INSERT OR IGNORE INTO contacts (user_id, friend_id) VALUES (?, ?)').run(friend.id, userId);
+        res.json({ id: friend.id, username: friend.username });
+    } catch (err) {
+        if (err.message.includes('UNIQUE')) return res.status(400).json({ error: 'Already contacts' });
+        return res.status(500).json({ error: 'Database error' });
+    }
 });
 
 // Create Group
@@ -107,21 +108,24 @@ app.post('/api/groups/create', (req, res) => {
         return res.status(400).json({ error: 'Missing required group fields' });
     }
 
-    db.run('INSERT INTO groups (name, created_by) VALUES (?, ?)', [name, creatorId], function(err) {
-        if (err) return res.status(500).json({ error: 'Failed to create group' });
+    try {
+        const info = db.prepare('INSERT INTO groups (name, created_by) VALUES (?, ?)').run(name, creatorId);
+        const groupId = info.lastInsertRowid;
         
-        const groupId = this.lastID;
         // Include creator in group members
         const allMembers = Array.from(new Set([...memberIds, creatorId]));
         
-        let stmt = db.prepare('INSERT INTO group_members (group_id, user_id) VALUES (?, ?)');
-        allMembers.forEach(userId => {
-            stmt.run([groupId, userId]);
+        const stmt = db.prepare('INSERT INTO group_members (group_id, user_id) VALUES (?, ?)');
+        const insertMany = db.transaction((members) => {
+            for (const userId of members) {
+                stmt.run(groupId, userId);
+            }
         });
-        stmt.finalize(() => {
-            res.json({ id: groupId, name, is_group: true });
-        });
-    });
+        insertMany(allMembers);
+        res.json({ id: groupId, name, is_group: true });
+    } catch (err) {
+        return res.status(500).json({ error: 'Failed to create group' });
+    }
 });
 
 // Get Groups
@@ -133,11 +137,13 @@ app.get('/api/groups/:userId', (req, res) => {
         JOIN groups g ON gm.group_id = g.id
         WHERE gm.user_id = ?
     `;
-    db.all(query, [userId], (err, rows) => {
-        if (err) return res.status(500).json({ error: 'Database error fetch groups' });
+    try {
+        const rows = db.prepare(query).all(userId);
         const mapped = (rows || []).map(r => ({ ...r, is_group: true }));
         res.json(mapped);
-    });
+    } catch (err) {
+        return res.status(500).json({ error: 'Database error fetch groups' });
+    }
 });
 
 // Upload Image
@@ -161,10 +167,12 @@ app.get('/api/messages/:userId/:friendOrGroupId', (req, res) => {
         params = [userId, friendOrGroupId, friendOrGroupId, userId];
     }
 
-    db.all(query, params, (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
+    try {
+        const rows = db.prepare(query).all(...params);
         res.json(rows || []);
-    });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
 });
 
 // Socket.IO
@@ -175,11 +183,14 @@ io.on('connection', (socket) => {
         socket.join(`user_${userId}`);
         
         // Also fetch and join all group rooms for this user
-        db.all('SELECT group_id FROM group_members WHERE user_id = ?', [userId], (err, rows) => {
-            if (!err && rows) {
+        try {
+            const rows = db.prepare('SELECT group_id FROM group_members WHERE user_id = ?').all(userId);
+            if (rows) {
                 rows.forEach(r => socket.join(`group_${r.group_id}`));
             }
-        });
+        } catch (err) {
+            console.error('Error fetching group members:', err.message);
+        }
     });
 
     socket.on('join_new_group', (groupId) => {
@@ -192,33 +203,33 @@ io.on('connection', (socket) => {
         let msgType = type || 'text';
         let valReceiverId = groupId ? null : receiverId;
         
-        db.run('INSERT INTO messages (sender_id, receiver_id, group_id, content, image_url, type) VALUES (?, ?, ?, ?, ?, ?)', 
-            [senderId, valReceiverId, groupId || null, content, imageUrl || null, msgType], 
-            function(err) {
-                if (err) return console.error('Error saving message:', err.message);
-                
-                const messageObj = {
-                    id: this.lastID,
-                    sender_id: senderId,
-                    receiver_id: valReceiverId,
-                    group_id: groupId || null,
-                    content,
-                    image_url: imageUrl || null,
-                    type: msgType,
-                    timestamp: new Date().toISOString()
-                };
+        try {
+            const info = db.prepare('INSERT INTO messages (sender_id, receiver_id, group_id, content, image_url, type) VALUES (?, ?, ?, ?, ?, ?)').run(
+                senderId, valReceiverId, groupId || null, content, imageUrl || null, msgType
+            );
+            
+            const messageObj = {
+                id: info.lastInsertRowid,
+                sender_id: senderId,
+                receiver_id: valReceiverId,
+                group_id: groupId || null,
+                content,
+                image_url: imageUrl || null,
+                type: msgType,
+                timestamp: new Date().toISOString()
+            };
 
-                if (groupId) {
-                    db.get('SELECT username FROM users WHERE id = ?', [senderId], (err, row) => {
-                        messageObj.sender_username = row ? row.username : 'Unknown';
-                        io.to(`group_${groupId}`).emit('receive_message', messageObj);
-                    });
-                } else {
-                    io.to(`user_${receiverId}`).emit('receive_message', messageObj);
-                    socket.emit('message_sent', messageObj);
-                }
+            if (groupId) {
+                const row = db.prepare('SELECT username FROM users WHERE id = ?').get(senderId);
+                messageObj.sender_username = row ? row.username : 'Unknown';
+                io.to(`group_${groupId}`).emit('receive_message', messageObj);
+            } else {
+                io.to(`user_${receiverId}`).emit('receive_message', messageObj);
+                socket.emit('message_sent', messageObj);
             }
-        );
+        } catch (err) {
+            console.error('Error saving message:', err.message);
+        }
     });
 
     socket.on('disconnect', () => {

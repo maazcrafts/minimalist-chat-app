@@ -10,14 +10,17 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": "18.x"
+  },
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^11.5.0",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.1.1",
-    "socket.io": "^4.8.3",
-    "sqlite3": "^6.0.1"
+    "socket.io": "^4.8.3"
   }
 }
