@@ -3,7 +3,7 @@ import axios from 'axios';
 import { io } from 'socket.io-client';
 import { Send, UserPlus, LogOut, Users, Image as ImageIcon, X } from 'lucide-react';
 
-const API_URL = 'http://localhost:3000/api';
+const API_URL = 'https://minimalist-chat-app.onrender.com/api';
 let socket;
 
 const ChatDashboard = ({ user, setUser }) => {
@@ -49,7 +49,7 @@ const ChatDashboard = ({ user, setUser }) => {
     fetchContacts();
     fetchGroups();
 
-    socket = io('http://localhost:3000');
+    socket = io('https://minimalist-chat-app.onrender.com');
     socket.emit('join', user.id);
 
     socket.on('receive_message', (msgObj) => {

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 
-const API_URL = 'http://localhost:3000/api/auth';
+const API_URL = 'https://minimalist-chat-app.onrender.com/api/auth';
 
 const AuthPage = ({ setUser }) => {
   const [isLogin, setIsLogin] = useState(true);
