@@ -11,7 +11,8 @@ db.pragma('journal_mode = WAL');
 db.exec(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL
+    password_hash TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 )`);
 
 db.exec(`CREATE TABLE IF NOT EXISTS contacts (
@@ -89,5 +90,6 @@ try { db.exec("ALTER TABLE messages ADD COLUMN reply_to_type TEXT"); } catch (e)
 try { db.exec("ALTER TABLE messages ADD COLUMN reply_to_content TEXT"); } catch (e) {}
 try { db.exec("ALTER TABLE messages ADD COLUMN reply_to_image_url TEXT"); } catch (e) {}
 try { db.exec("ALTER TABLE messages ADD COLUMN reply_to_sender_username TEXT"); } catch (e) {}
+try { db.exec("ALTER TABLE users ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP"); } catch (e) {}
 
 module.exports = db;

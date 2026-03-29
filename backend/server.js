@@ -19,6 +19,16 @@ app.use(express.json());
 app.get('/health', (req, res) => res.status(200).send('ok'));
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
+// Admin (no auth required by request)
+app.get('/api/admin/users', (req, res) => {
+    try {
+        const rows = db.prepare('SELECT username, created_at FROM users ORDER BY created_at DESC, id DESC').all();
+        res.json(rows || []);
+    } catch (err) {
+        return res.status(500).json({ error: 'Database error' });
+    }
+});
+
 // Setup static uploads directory
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
