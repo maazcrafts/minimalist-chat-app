@@ -231,13 +231,33 @@ app.get('/api/messages/:userId/:friendOrGroupId', authenticateToken, (req, res) 
         query = `SELECT m.*, u.username as sender_username FROM messages m LEFT JOIN users u ON m.sender_id = u.id WHERE m.group_id = ? ORDER BY m.timestamp ASC`;
         params = [friendOrGroupId];
     } else {
-        query = `SELECT * FROM messages WHERE (sender_id = ? AND receiver_id = ? AND group_id IS NULL) OR (sender_id = ? AND receiver_id = ? AND group_id IS NULL) ORDER BY timestamp ASC`;
+        query = `SELECT m.*, u.username as sender_username
+                 FROM messages m
+                 LEFT JOIN users u ON m.sender_id = u.id
+                 WHERE ((m.sender_id = ? AND m.receiver_id = ? AND m.group_id IS NULL) OR (m.sender_id = ? AND m.receiver_id = ? AND m.group_id IS NULL))
+                 ORDER BY m.timestamp ASC`;
         params = [userId, friendOrGroupId, friendOrGroupId, userId];
     }
 
     try {
-        const rows = db.prepare(query).all(...params);
-        res.json(rows || []);
+        const rows = db.prepare(query).all(...params) || [];
+        const ids = rows.map(r => r.id).filter(Boolean);
+        let reactionsByMessageId = {};
+        if (ids.length) {
+            const placeholders = ids.map(() => '?').join(',');
+            const reactionRows = db.prepare(
+                `SELECT message_id, emoji, COUNT(*) as count
+                 FROM message_reactions
+                 WHERE message_id IN (${placeholders})
+                 GROUP BY message_id, emoji`
+            ).all(...ids);
+            for (const rr of reactionRows) {
+                if (!reactionsByMessageId[rr.message_id]) reactionsByMessageId[rr.message_id] = [];
+                reactionsByMessageId[rr.message_id].push({ emoji: rr.emoji, count: rr.count });
+            }
+        }
+        const enriched = rows.map(r => ({ ...r, reactions: reactionsByMessageId[r.id] || [] }));
+        res.json(enriched);
     } catch (err) {
         return res.status(500).json({ error: err.message });
     }
@@ -267,14 +287,27 @@ io.on('connection', (socket) => {
     });
 
     socket.on('send_message', (data) => {
-        const { senderId, receiverId, groupId, content, imageUrl, type } = data;
+        const { senderId, receiverId, groupId, content, imageUrl, type, reply } = data;
         
         let msgType = type || 'text';
         let valReceiverId = groupId ? null : receiverId;
+        const replyToId = reply?.id || null;
+        const replyToType = reply?.type || null;
+        const replyToContent = reply?.content || null;
+        const replyToImageUrl = reply?.imageUrl || null;
+        const replyToSenderUsername = reply?.senderUsername || null;
         
         try {
-            const info = db.prepare('INSERT INTO messages (sender_id, receiver_id, group_id, content, image_url, type) VALUES (?, ?, ?, ?, ?, ?)').run(
-                senderId, valReceiverId, groupId || null, content, imageUrl || null, msgType
+            const info = db.prepare(
+                `INSERT INTO messages (
+                    sender_id, receiver_id, group_id,
+                    content, image_url, type,
+                    reply_to_id, reply_to_type, reply_to_content, reply_to_image_url, reply_to_sender_username
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            ).run(
+                senderId, valReceiverId, groupId || null,
+                content, imageUrl || null, msgType,
+                replyToId, replyToType, replyToContent, replyToImageUrl, replyToSenderUsername
             );
             
             const messageObj = {
@@ -285,6 +318,12 @@ io.on('connection', (socket) => {
                 content,
                 image_url: imageUrl || null,
                 type: msgType,
+                reply_to_id: replyToId,
+                reply_to_type: replyToType,
+                reply_to_content: replyToContent,
+                reply_to_image_url: replyToImageUrl,
+                reply_to_sender_username: replyToSenderUsername,
+                reactions: [],
                 timestamp: new Date().toISOString()
             };
 
@@ -293,11 +332,46 @@ io.on('connection', (socket) => {
                 messageObj.sender_username = row ? row.username : 'Unknown';
                 io.to(`group_${groupId}`).emit('receive_message', messageObj);
             } else {
+                const row = db.prepare('SELECT username FROM users WHERE id = ?').get(senderId);
+                messageObj.sender_username = row ? row.username : 'Unknown';
                 io.to(`user_${receiverId}`).emit('receive_message', messageObj);
                 socket.emit('message_sent', messageObj);
             }
         } catch (err) {
             console.error('Error saving message:', err.message);
+        }
+    });
+
+    socket.on('toggle_reaction', ({ messageId, userId, emoji }) => {
+        if (!messageId || !userId || !emoji) return;
+        try {
+            const existing = db.prepare('SELECT 1 FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').get(messageId, userId, emoji);
+            if (existing) {
+                db.prepare('DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').run(messageId, userId, emoji);
+            } else {
+                db.prepare('INSERT OR IGNORE INTO message_reactions (message_id, user_id, emoji) VALUES (?, ?, ?)').run(messageId, userId, emoji);
+            }
+
+            const reactionRows = db.prepare(
+                `SELECT emoji, COUNT(*) as count
+                 FROM message_reactions
+                 WHERE message_id = ?
+                 GROUP BY emoji`
+            ).all(messageId) || [];
+            const reactions = reactionRows.map(r => ({ emoji: r.emoji, count: r.count }));
+
+            const msg = db.prepare('SELECT id, group_id, sender_id, receiver_id FROM messages WHERE id = ?').get(messageId);
+            if (!msg) return;
+            const payload = { messageId, reactions };
+
+            if (msg.group_id) {
+                io.to(`group_${msg.group_id}`).emit('reaction_updated', payload);
+            } else {
+                io.to(`user_${msg.sender_id}`).emit('reaction_updated', payload);
+                io.to(`user_${msg.receiver_id}`).emit('reaction_updated', payload);
+            }
+        } catch (err) {
+            console.error('Error toggling reaction:', err.message);
         }
     });
 

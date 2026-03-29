@@ -46,11 +46,26 @@ db.exec(`CREATE TABLE IF NOT EXISTS messages (
     content TEXT,
     image_url TEXT,
     type TEXT DEFAULT 'text',
+    reply_to_id INTEGER,
+    reply_to_type TEXT,
+    reply_to_content TEXT,
+    reply_to_image_url TEXT,
+    reply_to_sender_username TEXT,
     status TEXT DEFAULT 'sent',
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (sender_id) REFERENCES users (id),
     FOREIGN KEY (receiver_id) REFERENCES users (id),
     FOREIGN KEY (group_id) REFERENCES groups (id)
+)`);
+
+db.exec(`CREATE TABLE IF NOT EXISTS message_reactions (
+    message_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    emoji TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (message_id, user_id, emoji),
+    FOREIGN KEY (message_id) REFERENCES messages (id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 )`);
 
 db.exec(`CREATE TABLE IF NOT EXISTS friend_requests (
@@ -69,5 +84,10 @@ try { db.exec("ALTER TABLE messages ADD COLUMN group_id INTEGER"); } catch (e) {
 try { db.exec("ALTER TABLE messages ADD COLUMN image_url TEXT"); } catch (e) {}
 try { db.exec("ALTER TABLE messages ADD COLUMN type TEXT DEFAULT 'text'"); } catch (e) {}
 try { db.exec("ALTER TABLE messages ADD COLUMN status TEXT DEFAULT 'sent'"); } catch (e) {}
+try { db.exec("ALTER TABLE messages ADD COLUMN reply_to_id INTEGER"); } catch (e) {}
+try { db.exec("ALTER TABLE messages ADD COLUMN reply_to_type TEXT"); } catch (e) {}
+try { db.exec("ALTER TABLE messages ADD COLUMN reply_to_content TEXT"); } catch (e) {}
+try { db.exec("ALTER TABLE messages ADD COLUMN reply_to_image_url TEXT"); } catch (e) {}
+try { db.exec("ALTER TABLE messages ADD COLUMN reply_to_sender_username TEXT"); } catch (e) {}
 
 module.exports = db;

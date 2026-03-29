@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { io } from 'socket.io-client';
-import { Send, UserPlus, LogOut, Users, Image as ImageIcon, X, Check, CheckCheck, CheckCircle, XCircle, ArrowLeft, Mic } from 'lucide-react';
+import { Send, UserPlus, LogOut, Users, Image as ImageIcon, X, Check, CheckCheck, CheckCircle, XCircle, ArrowLeft, Mic, Reply as ReplyIcon, Smile } from 'lucide-react';
+import EmojiPicker from 'emoji-picker-react';
 
 const API_URL = 'https://minimalist-chat-app.onrender.com/api';
 const ORIGIN_URL = 'https://minimalist-chat-app.onrender.com';
@@ -34,6 +35,21 @@ const ChatDashboard = ({ user, setUser }) => {
   const messagesContainerRef = useRef(null);
   const fileInputRef = useRef(null);
   const isAtBottomRef = useRef(true);
+
+  // Lightbox
+  const [lightboxUrl, setLightboxUrl] = useState(null);
+
+  // Reply
+  const [replyTo, setReplyTo] = useState(null);
+
+  // Message actions (right-click / long-press)
+  const [messageMenu, setMessageMenu] = useState(null); // { message, x, y }
+  const longPressTimerRef = useRef(null);
+
+  // Emoji reactions
+  const [emojiPickerFor, setEmojiPickerFor] = useState(null); // messageId
+  const [emojiPickerAnchor, setEmojiPickerAnchor] = useState(null); // { x, y }
+  const emojiPickerHoverRef = useRef(false);
 
   useEffect(() => {
     activeChatRef.current = activeChat;
@@ -103,6 +119,11 @@ const ChatDashboard = ({ user, setUser }) => {
       setMessages((prev) => prev.map(m => 
         (m.receiver_id === user.id || m.sender_id === user.id) ? { ...m, status: 'seen' } : m
       ));
+    });
+
+    socket.on('reaction_updated', ({ messageId, reactions }) => {
+      if (!messageId) return;
+      setMessages(prev => prev.map(m => (m.id === messageId ? { ...m, reactions: reactions || [] } : m)));
     });
 
     return () => {
@@ -237,10 +258,12 @@ const ChatDashboard = ({ user, setUser }) => {
       groupId: activeChat.is_group ? activeChat.id : null,
       content,
       imageUrl,
-      type
+      type,
+      reply: replyTo
     });
 
     if (!customPayload) setNewMessage('');
+    setReplyTo(null);
   };
 
   const handleFileUpload = async (e) => {
@@ -324,6 +347,100 @@ const ChatDashboard = ({ user, setUser }) => {
     const thresholdPx = 80;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     isAtBottomRef.current = distanceFromBottom <= thresholdPx;
+  };
+
+  const normalizeMediaUrl = (url) => {
+    if (!url) return '';
+    return url.replace('http://localhost:3000', ORIGIN_URL);
+  };
+
+  const closeOverlays = () => {
+    setMessageMenu(null);
+    if (!emojiPickerHoverRef.current) {
+      setEmojiPickerFor(null);
+      setEmojiPickerAnchor(null);
+    }
+  };
+
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setLightboxUrl(null);
+        setMessageMenu(null);
+        setEmojiPickerFor(null);
+        setEmojiPickerAnchor(null);
+      }
+    };
+    const onClick = () => closeOverlays();
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('click', onClick);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('click', onClick);
+    };
+  }, []);
+
+  const openMessageMenu = (message, x, y) => {
+    setMessageMenu({ message, x, y });
+  };
+
+  const startLongPress = (message, touchEvent) => {
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    const t = touchEvent.touches?.[0];
+    if (!t) return;
+    longPressTimerRef.current = setTimeout(() => {
+      openMessageMenu(message, t.clientX, t.clientY);
+      setEmojiPickerFor(null);
+      setEmojiPickerAnchor(null);
+    }, 550);
+  };
+
+  const cancelLongPress = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const buildReplySnapshot = (msg) => {
+    if (!msg?.id) return null;
+    const replyType = msg.type || 'text';
+    return {
+      id: msg.id,
+      type: replyType,
+      content: replyType === 'text' ? (msg.content || '') : '',
+      imageUrl: replyType === 'image' || replyType === 'audio' ? (msg.image_url || '') : '',
+      senderUsername: msg.sender_id === user.id ? user.username : (msg.sender_username || activeChat?.username || 'Unknown')
+    };
+  };
+
+  const openEmojiPicker = (messageId, x, y) => {
+    setEmojiPickerFor(messageId);
+    setEmojiPickerAnchor({ x, y });
+    setMessageMenu(null);
+  };
+
+  const handleToggleReaction = (messageId, emoji) => {
+    if (!socket || !messageId || !emoji) return;
+    socket.emit('toggle_reaction', { messageId, userId: user.id, emoji });
+  };
+
+  const renderReplySnippet = (msg) => {
+    if (!msg?.reply_to_id) return null;
+    const t = msg.reply_to_type || 'text';
+    const label =
+      t === 'image' ? '[Image]' :
+      t === 'audio' ? '[Voice message]' :
+      (msg.reply_to_content || '');
+    return (
+      <div className="reply-quote">
+        <div className="reply-quote-header">
+          <ReplyIcon size={14} />
+          <span>{msg.reply_to_sender_username || 'Reply'}</span>
+        </div>
+        <div className="reply-quote-body">{label}</div>
+      </div>
+    );
   };
 
   return (
@@ -451,7 +568,33 @@ const ChatDashboard = ({ user, setUser }) => {
                   if (!activeChat.is_group && !isSentByMe && msg.sender_id !== activeChat.id) return null;
 
                   return (
-                    <div key={idx} className={`message ${isSentByMe ? 'sent' : 'received'}`} style={(msg.type === 'image' || msg.type === 'audio') ? {background: 'transparent', padding: 0, border: 'none'} : {}}>
+                    <div
+                      key={msg.id || idx}
+                      className={`message ${isSentByMe ? 'sent' : 'received'}`}
+                      style={(msg.type === 'image' || msg.type === 'audio') ? {background: 'transparent', padding: 0, border: 'none'} : {}}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        openMessageMenu(msg, e.clientX, e.clientY);
+                      }}
+                      onTouchStart={(e) => startLongPress(msg, e)}
+                      onTouchEnd={cancelLongPress}
+                      onTouchMove={cancelLongPress}
+                      onTouchCancel={cancelLongPress}
+                      onMouseLeave={() => {
+                        if (!emojiPickerHoverRef.current) {
+                          setEmojiPickerFor(null);
+                          setEmojiPickerAnchor(null);
+                        }
+                      }}
+                      onMouseEnter={(e) => {
+                        // Desktop hover shows full picker (anchored near message)
+                        if (window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          openEmojiPicker(msg.id, rect.right - 8, rect.top - 8);
+                        }
+                      }}
+                    >
                       {!isSentByMe && activeChat.is_group && msg.type !== 'image' && msg.type !== 'audio' && (
                         <div className="sender-name">{msg.sender_username}</div>
                       )}
@@ -459,20 +602,50 @@ const ChatDashboard = ({ user, setUser }) => {
                       {msg.type === 'audio' ? (
                         <div>
                           {!isSentByMe && activeChat.is_group && <div className="sender-name" style={{color: 'var(--text-muted)'}}>{msg.sender_username}</div>}
-                          <audio src={msg.image_url ? msg.image_url.replace('http://localhost:3000', 'https://minimalist-chat-app.onrender.com') : ''} controls style={{height: 36, outline: 'none', maxWidth: 240, borderRadius: 18}} />
+                          <audio src={normalizeMediaUrl(msg.image_url)} controls style={{height: 36, outline: 'none', maxWidth: 240, borderRadius: 18}} />
                         </div>
                       ) : msg.type === 'image' ? (
                         <div>
                           {!isSentByMe && activeChat.is_group && <div className="sender-name" style={{color: 'var(--text-muted)'}}>{msg.sender_username}</div>}
-                          <img src={msg.image_url ? msg.image_url.replace('http://localhost:3000', 'https://minimalist-chat-app.onrender.com') : ''} alt="Shared" className="message-image" />
+                          <img
+                            src={normalizeMediaUrl(msg.image_url)}
+                            alt="Shared"
+                            className="message-image"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setLightboxUrl(normalizeMediaUrl(msg.image_url));
+                            }}
+                          />
                         </div>
                       ) : (
-                        msg.content
+                        <>
+                          {renderReplySnippet(msg)}
+                          {msg.content}
+                        </>
                       )}
 
                       <div className="message-time-status" style={{justifyContent: isSentByMe ? 'flex-end' : 'flex-start'}}>
                         {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                       </div>
+
+                      {Array.isArray(msg.reactions) && msg.reactions.length > 0 && (
+                        <div className="reactions-row">
+                          {msg.reactions.map(r => (
+                            <button
+                              key={`${r.emoji}`}
+                              type="button"
+                              className="reaction-pill"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleReaction(msg.id, r.emoji);
+                              }}
+                            >
+                              <span className="reaction-emoji">{r.emoji}</span>
+                              <span className="reaction-count">{r.count}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -480,6 +653,22 @@ const ChatDashboard = ({ user, setUser }) => {
               </div>
 
               <div className="chat-input-area">
+                {replyTo && (
+                  <div className="reply-preview">
+                    <div className="reply-preview-left">
+                      <div className="reply-preview-title">
+                        <ReplyIcon size={14} />
+                        <span>Replying to {replyTo.senderUsername || 'message'}</span>
+                      </div>
+                      <div className="reply-preview-body">
+                        {replyTo.type === 'image' ? '[Image]' : replyTo.type === 'audio' ? '[Voice message]' : (replyTo.content || '')}
+                      </div>
+                    </div>
+                    <button type="button" className="reply-preview-close" onClick={() => setReplyTo(null)} title="Cancel reply">
+                      <X size={16} />
+                    </button>
+                  </div>
+                )}
                 <form className="message-form" onSubmit={handleSendMessage}>
                   <button type="button" className="file-upload-btn" onClick={() => fileInputRef.current?.click()}>
                     <ImageIcon size={20} />
@@ -531,6 +720,85 @@ const ChatDashboard = ({ user, setUser }) => {
           )}
         </div>
       </div>
+
+      {/* Message actions menu (desktop right click / mobile long press) */}
+      {messageMenu && (
+        <div
+          className="message-menu"
+          style={{ left: messageMenu.x, top: messageMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="message-menu-item"
+            onClick={() => {
+              setReplyTo(buildReplySnapshot(messageMenu.message));
+              setMessageMenu(null);
+            }}
+          >
+            <ReplyIcon size={16} />
+            <span>Reply</span>
+          </button>
+          <button
+            type="button"
+            className="message-menu-item"
+            onClick={() => {
+              openEmojiPicker(messageMenu.message.id, messageMenu.x + 10, messageMenu.y + 10);
+            }}
+          >
+            <Smile size={16} />
+            <span>React</span>
+          </button>
+        </div>
+      )}
+
+      {/* Emoji picker popover */}
+      {emojiPickerFor && emojiPickerAnchor && (
+        <div
+          className="emoji-picker-popover"
+          style={{ left: emojiPickerAnchor.x, top: emojiPickerAnchor.y }}
+          onMouseEnter={() => { emojiPickerHoverRef.current = true; }}
+          onMouseLeave={() => { emojiPickerHoverRef.current = false; setEmojiPickerFor(null); setEmojiPickerAnchor(null); }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <EmojiPicker
+            onEmojiClick={(emojiData) => {
+              handleToggleReaction(emojiPickerFor, emojiData.emoji);
+            }}
+            width={320}
+            height={380}
+            searchDisabled={false}
+            skinTonesDisabled={false}
+            previewConfig={{ showPreview: false }}
+          />
+        </div>
+      )}
+
+      {/* Image lightbox */}
+      {lightboxUrl && (
+        <div
+          className="lightbox-overlay"
+          onClick={() => setLightboxUrl(null)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <button
+            type="button"
+            className="lightbox-close"
+            onClick={(e) => { e.stopPropagation(); setLightboxUrl(null); }}
+            aria-label="Close"
+            title="Close"
+          >
+            <X size={22} />
+          </button>
+          <img
+            className="lightbox-image"
+            src={lightboxUrl}
+            alt="Image"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
 
       {showGroupModal && (
         <div className="modal-overlay">
