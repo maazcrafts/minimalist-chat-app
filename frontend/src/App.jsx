@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import axios from 'axios';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import AuthPage from './components/AuthPage';
 import ChatDashboard from './components/ChatDashboard';
@@ -9,7 +10,9 @@ function App() {
   useEffect(() => {
     const savedUser = localStorage.getItem('chat_user');
     if (savedUser) {
-      setUser(JSON.parse(savedUser));
+      const parsed = JSON.parse(savedUser);
+      axios.defaults.headers.common['Authorization'] = `Bearer ${parsed.token}`;
+      setUser(parsed);
     }
   }, []);
 
