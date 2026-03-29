@@ -18,6 +18,7 @@ const AuthPage = ({ setUser }) => {
       const res = await axios.post(`${API_URL}${endpoint}`, { username, password });
       
       localStorage.setItem('chat_user', JSON.stringify(res.data));
+      axios.defaults.headers.common['Authorization'] = `Bearer ${res.data.token}`;
       setUser(res.data);
     } catch (err) {
       setError(err.response?.data?.error || 'An error occurred. Please try again.');

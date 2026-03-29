@@ -14,10 +14,17 @@ function App() {
     const savedUser = localStorage.getItem('chat_user');
     if (savedUser) {
       const parsed = JSON.parse(savedUser);
-      axios.defaults.headers.common['Authorization'] = `Bearer ${parsed.token}`;
       setUser(parsed);
     }
   }, []);
+
+  useEffect(() => {
+    if (user?.token) {
+      axios.defaults.headers.common['Authorization'] = `Bearer ${user.token}`;
+    } else {
+      delete axios.defaults.headers.common['Authorization'];
+    }
+  }, [user]);
 
   useEffect(() => {
     // Keep Render free tier awake (best-effort ping)
