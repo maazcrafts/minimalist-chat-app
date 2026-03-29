@@ -782,8 +782,99 @@ body {
   align-items: center;
   margin-top: 2px;
   opacity: 0.8;
+  gap: 8px;
 }
 
+/* Read receipts (dots) */
+.receipt {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.receipt .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #9ca3af; /* grey */
+  display: inline-block;
+}
+.receipt .dot.dot-2 {
+  display: none;
+}
+.receipt-delivered .dot.dot-2,
+.receipt-seen .dot.dot-2 {
+  display: inline-block;
+}
+.receipt-seen .dot {
+  background: #3b82f6; /* blue */
+}
+
+/* Voice recording panel */
+.voice-panel {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.15);
+  margin-bottom: 10px;
+}
+.voice-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.rec-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #ef4444;
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15);
+}
+.voice-text {
+  font-size: 13px;
+  color: var(--text-main);
+}
+.voice-timer {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.voice-panel audio {
+  height: 34px;
+  max-width: 52vw;
+  border-radius: 999px;
+}
+.voice-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.voice-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.voice-btn:hover {
+  background: rgba(255, 255, 255, 0.10);
+}
+.voice-btn.cancel:hover {
+  background: rgba(239, 68, 68, 0.10);
+  border-color: rgba(239, 68, 68, 0.25);
+}
+.voice-btn.stop:hover {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.25);
+}
 /* Mobile Responsiveness */
 @media (max-width: 768px) {
   .app-container {

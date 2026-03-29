@@ -21,6 +21,10 @@ const ChatDashboard = ({ user, setUser }) => {
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const recordingTimerRef = useRef(null);
+  const [recordedAudioBlob, setRecordedAudioBlob] = useState(null);
+  const [recordedAudioUrl, setRecordedAudioUrl] = useState(null);
 
   // Group Modal
   const [showGroupModal, setShowGroupModal] = useState(false);
@@ -113,12 +117,25 @@ const ChatDashboard = ({ user, setUser }) => {
       }
     });
 
+    socket.on('message_delivered', ({ messageId }) => {
+      if (!messageId) return;
+      setMessages(prev => prev.map(m => (m.id === messageId ? { ...m, status: 'delivered' } : m)));
+    });
+
     socket.on('new_friend_request', () => { fetchRequests(); });
     socket.on('friend_request_accepted', () => { fetchContacts(); });
     socket.on('messages_read', (data) => {
-      setMessages((prev) => prev.map(m => 
-        (m.receiver_id === user.id || m.sender_id === user.id) ? { ...m, status: 'seen' } : m
-      ));
+      // Mark only messages I sent to the currently-open friend as seen
+      const byUserId = data?.by_user_id;
+      if (!byUserId) return;
+      setMessages((prev) => prev.map(m => {
+        if (m.group_id) return m;
+        // Receiver opened chat with me => messages I sent to them are now seen
+        if (m.sender_id === user.id && m.receiver_id === byUserId) {
+          return { ...m, status: 'seen' };
+        }
+        return m;
+      }));
     });
 
     socket.on('reaction_updated', ({ messageId, reactions }) => {
@@ -250,7 +267,36 @@ const ChatDashboard = ({ user, setUser }) => {
     const type = customPayload?.type || 'text';
     const imageUrl = customPayload?.imageUrl || null;
 
-    if (!content && !imageUrl) return;
+    if (!content && !imageUrl && !recordedAudioBlob) return;
+
+    // If there's a recorded audio preview pending and user hits send, upload then send as audio.
+    if (!customPayload && recordedAudioBlob && !content && !imageUrl) {
+      (async () => {
+        try {
+          const formData = new FormData();
+          formData.append('file', recordedAudioBlob, 'voice.webm');
+          const res = await axios.post(`${API_URL}/upload`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+          });
+          socket.emit('send_message', {
+            senderId: user.id,
+            receiverId: activeChat.is_group ? null : activeChat.id,
+            groupId: activeChat.is_group ? activeChat.id : null,
+            content: '',
+            imageUrl: res.data.url,
+            type: 'audio',
+            reply: replyTo
+          });
+          setRecordedAudioBlob(null);
+          if (recordedAudioUrl) URL.revokeObjectURL(recordedAudioUrl);
+          setRecordedAudioUrl(null);
+          setReplyTo(null);
+        } catch (err) {
+          alert('Failed to send voice message');
+        }
+      })();
+      return;
+    }
 
     socket.emit('send_message', {
       senderId: user.id,
@@ -290,6 +336,10 @@ const ChatDashboard = ({ user, setUser }) => {
 
   const startRecording = async () => {
     try {
+      if (recordedAudioUrl) URL.revokeObjectURL(recordedAudioUrl);
+      setRecordedAudioUrl(null);
+      setRecordedAudioBlob(null);
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
@@ -303,26 +353,15 @@ const ChatDashboard = ({ user, setUser }) => {
 
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const formData = new FormData();
-        formData.append('file', audioBlob, 'voice.webm');
-
-        try {
-          const res = await axios.post(`${API_URL}/upload`, formData, {
-            headers: { 'Content-Type': 'multipart/form-data' }
-          });
-          
-          handleSendMessage(null, {
-            content: '',
-            imageUrl: res.data.url,
-            type: 'audio'
-          });
-        } catch (err) {
-          alert('Failed to send voice message');
-        }
+        setRecordedAudioBlob(audioBlob);
+        setRecordedAudioUrl(URL.createObjectURL(audioBlob));
       };
 
       mediaRecorder.start();
       setIsRecording(true);
+      setRecordingSeconds(0);
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = setInterval(() => setRecordingSeconds(s => s + 1), 1000);
     } catch (err) {
       alert('Microphone access denied');
     }
@@ -333,7 +372,35 @@ const ChatDashboard = ({ user, setUser }) => {
       mediaRecorderRef.current.stop();
       mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
       setIsRecording(false);
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
     }
+  };
+
+  const cancelRecording = () => {
+    if (isRecording) stopRecording();
+    setRecordingSeconds(0);
+    setRecordedAudioBlob(null);
+    if (recordedAudioUrl) URL.revokeObjectURL(recordedAudioUrl);
+    setRecordedAudioUrl(null);
+  };
+
+  const formatTime = (ts) => {
+    if (!ts) return '';
+    // If SQLite returns "YYYY-MM-DD HH:MM:SS" treat as UTC to avoid timezone shift bugs.
+    if (typeof ts === 'string' && ts.includes(' ') && !ts.includes('T')) {
+      const iso = ts.replace(' ', 'T') + 'Z';
+      return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const formatTimer = (s) => {
+    const mm = String(Math.floor(s / 60)).padStart(2, '0');
+    const ss = String(s % 60).padStart(2, '0');
+    return `${mm}:${ss}`;
   };
 
   const handleLogout = () => {
@@ -625,7 +692,13 @@ const ChatDashboard = ({ user, setUser }) => {
                       )}
 
                       <div className="message-time-status" style={{justifyContent: isSentByMe ? 'flex-end' : 'flex-start'}}>
-                        {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                        {msg.timestamp ? formatTime(msg.timestamp) : ''}
+                        {!msg.group_id && isSentByMe && (
+                          <span className={`receipt receipt-${msg.status || 'sent'}`} title={msg.status || 'sent'}>
+                            <span className="dot" />
+                            <span className="dot dot-2" />
+                          </span>
+                        )}
                       </div>
 
                       {Array.isArray(msg.reactions) && msg.reactions.length > 0 && (
@@ -669,6 +742,36 @@ const ChatDashboard = ({ user, setUser }) => {
                     </button>
                   </div>
                 )}
+
+                {(isRecording || recordedAudioUrl) && (
+                  <div className="voice-panel">
+                    <div className="voice-left">
+                      {isRecording ? (
+                        <>
+                          <span className="rec-dot" />
+                          <span className="voice-text">Recording</span>
+                          <span className="voice-timer">{formatTimer(recordingSeconds)}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="voice-text">Voice preview</span>
+                          <audio src={recordedAudioUrl || ''} controls />
+                        </>
+                      )}
+                    </div>
+                    <div className="voice-actions">
+                      <button type="button" className="voice-btn cancel" onClick={cancelRecording}>
+                        <X size={16} /> Cancel
+                      </button>
+                      {isRecording ? (
+                        <button type="button" className="voice-btn stop" onClick={stopRecording}>
+                          Stop
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                )}
+
                 <form className="message-form" onSubmit={handleSendMessage}>
                   <button type="button" className="file-upload-btn" onClick={() => fileInputRef.current?.click()}>
                     <ImageIcon size={20} />
@@ -689,16 +792,13 @@ const ChatDashboard = ({ user, setUser }) => {
                     onChange={(e) => setNewMessage(e.target.value)}
                   />
                   
-                  <button 
-                    type="button" 
+                  <button
+                    type="button"
                     className="file-upload-btn"
-                    title="Hold to Record"
+                    title={isRecording ? 'Stop recording' : 'Start recording'}
                     style={{color: isRecording ? '#ef4444' : 'var(--text-muted)'}}
-                    onMouseDown={startRecording}
-                    onMouseUp={stopRecording}
-                    onMouseLeave={stopRecording}
-                    onTouchStart={startRecording}
-                    onTouchEnd={stopRecording}
+                    onClick={() => (isRecording ? stopRecording() : startRecording())}
+                    disabled={!!recordedAudioBlob && !recordedAudioUrl}
                   >
                     <Mic size={20} />
                   </button>
@@ -706,7 +806,7 @@ const ChatDashboard = ({ user, setUser }) => {
                   <button 
                     type="submit" 
                     className="send-btn" 
-                    disabled={!newMessage.trim() && !isRecording}
+                    disabled={!newMessage.trim() && !recordedAudioBlob}
                   >
                     <Send size={16} />
                   </button>

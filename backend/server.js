@@ -312,12 +312,14 @@ io.on('connection', (socket) => {
                 `INSERT INTO messages (
                     sender_id, receiver_id, group_id,
                     content, image_url, type,
-                    reply_to_id, reply_to_type, reply_to_content, reply_to_image_url, reply_to_sender_username
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                    reply_to_id, reply_to_type, reply_to_content, reply_to_image_url, reply_to_sender_username,
+                    status
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             ).run(
                 senderId, valReceiverId, groupId || null,
                 content, imageUrl || null, msgType,
-                replyToId, replyToType, replyToContent, replyToImageUrl, replyToSenderUsername
+                replyToId, replyToType, replyToContent, replyToImageUrl, replyToSenderUsername,
+                'sent'
             );
             
             const messageObj = {
@@ -334,6 +336,7 @@ io.on('connection', (socket) => {
                 reply_to_image_url: replyToImageUrl,
                 reply_to_sender_username: replyToSenderUsername,
                 reactions: [],
+                status: 'sent',
                 timestamp: new Date().toISOString()
             };
 
@@ -346,6 +349,14 @@ io.on('connection', (socket) => {
                 messageObj.sender_username = row ? row.username : 'Unknown';
                 io.to(`user_${receiverId}`).emit('receive_message', messageObj);
                 socket.emit('message_sent', messageObj);
+
+                // Mark as delivered if receiver is connected to their room
+                const receiverRoom = io.sockets.adapter.rooms.get(`user_${receiverId}`);
+                const receiverOnline = receiverRoom && receiverRoom.size > 0;
+                if (receiverOnline) {
+                    db.prepare("UPDATE messages SET status = 'delivered' WHERE id = ? AND status = 'sent'").run(messageObj.id);
+                    socket.emit('message_delivered', { messageId: messageObj.id });
+                }
             }
         } catch (err) {
             console.error('Error saving message:', err.message);
@@ -387,8 +398,8 @@ io.on('connection', (socket) => {
 
     socket.on('mark_read', ({ userId, friendId }) => {
         try {
-            db.prepare("UPDATE messages SET status = 'seen' WHERE sender_id = ? AND receiver_id = ? AND status = 'sent' AND group_id IS NULL").run(friendId, userId);
-            io.to(`user_${friendId}`).emit('messages_read', { by_user_id: userId });
+            db.prepare("UPDATE messages SET status = 'seen' WHERE sender_id = ? AND receiver_id = ? AND status IN ('sent','delivered') AND group_id IS NULL").run(friendId, userId);
+            io.to(`user_${friendId}`).emit('messages_read', { by_user_id: userId, friend_id: friendId, user_id: userId });
         } catch (err) {
             console.error('Error marking read:', err.message);
         }
