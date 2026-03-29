@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { io } from 'socket.io-client';
-import { Send, UserPlus, LogOut, Users, Image as ImageIcon, X, Check, CheckCheck, CheckCircle, XCircle, ArrowLeft, Mic, Reply as ReplyIcon, Smile } from 'lucide-react';
+import { Send, UserPlus, LogOut, Users, Image as ImageIcon, X, Check, CheckCheck, CheckCircle, XCircle, ArrowLeft, Mic, Reply as ReplyIcon, Smile, Play, Pause } from 'lucide-react';
 import EmojiPicker from 'emoji-picker-react';
 
 const API_URL = 'https://minimalist-chat-app.onrender.com/api';
@@ -54,6 +54,120 @@ const ChatDashboard = ({ user, setUser }) => {
   const [emojiPickerFor, setEmojiPickerFor] = useState(null); // messageId
   const [emojiPickerAnchor, setEmojiPickerAnchor] = useState(null); // { x, y }
   const emojiPickerHoverRef = useRef(false);
+
+  const AudioPlayer = ({ src, compact = false }) => {
+    const audioRef = useRef(null);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [duration, setDuration] = useState(0);
+    const [currentTime, setCurrentTime] = useState(0);
+    const rafRef = useRef(null);
+
+    const formatClock = (t) => {
+      if (!Number.isFinite(t) || t <= 0) return '0:00';
+      const m = Math.floor(t / 60);
+      const s = Math.floor(t % 60);
+      return `${m}:${String(s).padStart(2, '0')}`;
+    };
+
+    const stopRaf = () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    };
+
+    const tick = () => {
+      const a = audioRef.current;
+      if (!a) return;
+      setCurrentTime(a.currentTime || 0);
+      if (!a.paused) {
+        rafRef.current = requestAnimationFrame(tick);
+      } else {
+        stopRaf();
+      }
+    };
+
+    useEffect(() => {
+      const a = audioRef.current;
+      if (!a) return;
+      const onLoaded = () => {
+        setDuration(a.duration || 0);
+        setCurrentTime(a.currentTime || 0);
+      };
+      const onEnded = () => {
+        setIsPlaying(false);
+        stopRaf();
+        setCurrentTime(a.duration || 0);
+      };
+      const onPause = () => {
+        setIsPlaying(false);
+        stopRaf();
+      };
+      const onPlay = () => {
+        setIsPlaying(true);
+        stopRaf();
+        rafRef.current = requestAnimationFrame(tick);
+      };
+
+      a.addEventListener('loadedmetadata', onLoaded);
+      a.addEventListener('ended', onEnded);
+      a.addEventListener('pause', onPause);
+      a.addEventListener('play', onPlay);
+      return () => {
+        stopRaf();
+        a.removeEventListener('loadedmetadata', onLoaded);
+        a.removeEventListener('ended', onEnded);
+        a.removeEventListener('pause', onPause);
+        a.removeEventListener('play', onPlay);
+      };
+    }, [src]);
+
+    const togglePlay = async () => {
+      const a = audioRef.current;
+      if (!a) return;
+      if (a.paused) {
+        try { await a.play(); } catch (_) {}
+      } else {
+        a.pause();
+      }
+    };
+
+    const onSeek = (value) => {
+      const a = audioRef.current;
+      if (!a || !Number.isFinite(duration) || duration <= 0) return;
+      const next = Math.min(duration, Math.max(0, value));
+      a.currentTime = next;
+      setCurrentTime(next);
+    };
+
+    const progress = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
+
+    return (
+      <div className={`audio-player ${compact ? 'compact' : ''}`}>
+        <button type="button" className="audio-btn" onClick={togglePlay} aria-label={isPlaying ? 'Pause' : 'Play'}>
+          {isPlaying ? <Pause size={16} /> : <Play size={16} />}
+        </button>
+        <div className="audio-mid">
+          <div className="audio-bar">
+            <div className="audio-bar-fill" style={{ width: `${progress * 100}%` }} />
+            <input
+              className="audio-range"
+              type="range"
+              min={0}
+              max={duration || 0}
+              step={0.1}
+              value={currentTime}
+              onChange={(e) => onSeek(Number(e.target.value))}
+            />
+          </div>
+          <div className="audio-time">
+            <span className="audio-time-current">{formatClock(currentTime)}</span>
+            <span className="audio-time-sep">/</span>
+            <span className="audio-time-duration">{formatClock(duration)}</span>
+          </div>
+        </div>
+        <audio ref={audioRef} src={src || ''} preload="metadata" />
+      </div>
+    );
+  };
 
   useEffect(() => {
     activeChatRef.current = activeChat;
@@ -669,7 +783,7 @@ const ChatDashboard = ({ user, setUser }) => {
                       {msg.type === 'audio' ? (
                         <div>
                           {!isSentByMe && activeChat.is_group && <div className="sender-name" style={{color: 'var(--text-muted)'}}>{msg.sender_username}</div>}
-                          <audio src={normalizeMediaUrl(msg.image_url)} controls style={{height: 36, outline: 'none', maxWidth: 240, borderRadius: 18}} />
+                          <AudioPlayer src={normalizeMediaUrl(msg.image_url)} compact />
                         </div>
                       ) : msg.type === 'image' ? (
                         <div>
@@ -755,7 +869,7 @@ const ChatDashboard = ({ user, setUser }) => {
                       ) : (
                         <>
                           <span className="voice-text">Voice preview</span>
-                          <audio src={recordedAudioUrl || ''} controls />
+                          <AudioPlayer src={recordedAudioUrl || ''} />
                         </>
                       )}
                     </div>
