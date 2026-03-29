@@ -84,7 +84,7 @@ app.get('/api/contacts/:userId', (req, res) => {
     }
 });
 
-// Add Contact
+// Add Friend Request
 app.post('/api/contacts/add', (req, res) => {
     const { userId, friendUsername } = req.body;
     try {
@@ -92,11 +92,57 @@ app.post('/api/contacts/add', (req, res) => {
         if (!friend) return res.status(404).json({ error: 'User not found' });
         if (friend.id === parseInt(userId)) return res.status(400).json({ error: 'Cannot add yourself' });
 
-        db.prepare('INSERT INTO contacts (user_id, friend_id) VALUES (?, ?)').run(userId, friend.id);
-        db.prepare('INSERT OR IGNORE INTO contacts (user_id, friend_id) VALUES (?, ?)').run(friend.id, userId);
-        res.json({ id: friend.id, username: friend.username });
+        // Check if already friends
+        const isFriend = db.prepare('SELECT * FROM contacts WHERE user_id = ? AND friend_id = ?').get(userId, friend.id);
+        if (isFriend) return res.status(400).json({ error: 'Already friends' });
+
+        db.prepare('INSERT INTO friend_requests (sender_id, receiver_id) VALUES (?, ?)').run(userId, friend.id);
+        
+        io.to(`user_${friend.id}`).emit('new_friend_request', { sender_id: userId });
+        
+        res.json({ message: 'Friend request sent' });
     } catch (err) {
-        if (err.message.includes('UNIQUE')) return res.status(400).json({ error: 'Already contacts' });
+        if (err.message.includes('UNIQUE')) return res.status(400).json({ error: 'Request already sent' });
+        return res.status(500).json({ error: 'Database error' });
+    }
+});
+
+// Get Friend Requests
+app.get('/api/contacts/requests/:userId', (req, res) => {
+    const userId = req.params.userId;
+    try {
+        const rows = db.prepare(`
+            SELECT fr.id as request_id, u.id as sender_id, u.username as sender_username 
+            FROM friend_requests fr 
+            JOIN users u ON fr.sender_id = u.id 
+            WHERE fr.receiver_id = ? AND fr.status = 'pending'
+        `).all(userId);
+        res.json(rows || []);
+    } catch (err) {
+        return res.status(500).json({ error: 'Database error' });
+    }
+});
+
+// Respond to Request
+app.post('/api/contacts/requests/respond', (req, res) => {
+    const { requestId, status } = req.body; // status: 'accepted' or 'rejected'
+    try {
+        const reqRow = db.prepare('SELECT * FROM friend_requests WHERE id = ?').get(requestId);
+        if (!reqRow) return res.status(404).json({ error: 'Request not found' });
+
+        if (status === 'accepted') {
+            db.prepare('INSERT OR IGNORE INTO contacts (user_id, friend_id) VALUES (?, ?)').run(reqRow.sender_id, reqRow.receiver_id);
+            db.prepare('INSERT OR IGNORE INTO contacts (user_id, friend_id) VALUES (?, ?)').run(reqRow.receiver_id, reqRow.sender_id);
+            db.prepare('UPDATE friend_requests SET status = ? WHERE id = ?').run('accepted', requestId);
+            
+            io.to(`user_${reqRow.sender_id}`).emit('friend_request_accepted', { new_friend_id: reqRow.receiver_id });
+            const friend = db.prepare('SELECT id, username FROM users WHERE id = ?').get(reqRow.sender_id);
+            res.json({ success: true, newContact: friend });
+        } else {
+            db.prepare('UPDATE friend_requests SET status = ? WHERE id = ?').run('rejected', requestId);
+            res.json({ success: true });
+        }
+    } catch (err) {
         return res.status(500).json({ error: 'Database error' });
     }
 });
@@ -146,10 +192,10 @@ app.get('/api/groups/:userId', (req, res) => {
     }
 });
 
-// Upload Image
-app.post('/api/upload', upload.single('image'), (req, res) => {
+// Upload File (Image or Audio)
+app.post('/api/upload', upload.single('file'), (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    const url = `http://localhost:3000/uploads/${req.file.filename}`;
+    const url = `https://minimalist-chat-app.onrender.com/uploads/${req.file.filename}`;
     res.json({ url });
 });
 
@@ -229,6 +275,15 @@ io.on('connection', (socket) => {
             }
         } catch (err) {
             console.error('Error saving message:', err.message);
+        }
+    });
+
+    socket.on('mark_read', ({ userId, friendId }) => {
+        try {
+            db.prepare("UPDATE messages SET status = 'seen' WHERE sender_id = ? AND receiver_id = ? AND status = 'sent' AND group_id IS NULL").run(friendId, userId);
+            io.to(`user_${friendId}`).emit('messages_read', { by_user_id: userId });
+        } catch (err) {
+            console.error('Error marking read:', err.message);
         }
     });
 

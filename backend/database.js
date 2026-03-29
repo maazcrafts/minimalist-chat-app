@@ -46,15 +46,28 @@ db.exec(`CREATE TABLE IF NOT EXISTS messages (
     content TEXT,
     image_url TEXT,
     type TEXT DEFAULT 'text',
+    status TEXT DEFAULT 'sent',
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (sender_id) REFERENCES users (id),
     FOREIGN KEY (receiver_id) REFERENCES users (id),
     FOREIGN KEY (group_id) REFERENCES groups (id)
 )`);
 
+db.exec(`CREATE TABLE IF NOT EXISTS friend_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender_id INTEGER,
+    receiver_id INTEGER,
+    status TEXT DEFAULT 'pending',
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (sender_id) REFERENCES users (id),
+    FOREIGN KEY (receiver_id) REFERENCES users (id),
+    UNIQUE(sender_id, receiver_id)
+)`);
+
 // Apply migrations for new columns gracefully (ignoring duplicate column errors)
 try { db.exec("ALTER TABLE messages ADD COLUMN group_id INTEGER"); } catch (e) {}
 try { db.exec("ALTER TABLE messages ADD COLUMN image_url TEXT"); } catch (e) {}
 try { db.exec("ALTER TABLE messages ADD COLUMN type TEXT DEFAULT 'text'"); } catch (e) {}
+try { db.exec("ALTER TABLE messages ADD COLUMN status TEXT DEFAULT 'sent'"); } catch (e) {}
 
 module.exports = db;

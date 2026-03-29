@@ -28,8 +28,8 @@ const AuthPage = ({ setUser }) => {
     <div className="app-container">
       <div className="auth-card">
         <div className="auth-header">
-          <h1>{isLogin ? 'Welcome Back' : 'Create Account'}</h1>
-          <p>{isLogin ? 'Sign in to connect with friends' : 'Sign up to start chatting'}</p>
+          <h1>[MaazX]</h1>
+          <p>{isLogin ? 'Welcome Back - Sign in to connect' : 'Create Account - Sign up to chat'}</p>
         </div>
 
         {error && <div className="error-text">{error}</div>}
@@ -69,6 +69,9 @@ const AuthPage = ({ setUser }) => {
           <span onClick={() => { setIsLogin(!isLogin); setError(''); setUsername(''); setPassword(''); }}>
             {isLogin ? 'Sign Up' : 'Sign In'}
           </span>
+        </div>
+        <div style={{ marginTop: '30px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>
+          Created by Maaz
         </div>
       </div>
     </div>
