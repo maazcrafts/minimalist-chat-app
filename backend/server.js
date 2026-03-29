@@ -15,6 +15,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Health checks / keep-alive
+app.get('/health', (req, res) => res.status(200).send('ok'));
+app.get('/api/health', (req, res) => res.json({ ok: true }));
+
 // Setup static uploads directory
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);

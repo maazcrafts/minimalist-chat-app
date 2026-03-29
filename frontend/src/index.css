@@ -334,6 +334,7 @@ body {
   display: flex;
   flex-direction: column;
   background: var(--bg-color);
+  min-height: 0; /* allow children with overflow to scroll in flex layouts */
 }
 
 .chat-header {
@@ -358,6 +359,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-height: 0;
 }
 
 .message {
@@ -391,6 +393,7 @@ body {
   padding: 16px 20px;
   background: var(--panel-bg);
   border-top: 1px solid var(--border-color);
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
 }
 
 .message-form {
@@ -400,16 +403,25 @@ body {
   padding: 8px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .message-input {
   flex: 1;
+  min-width: 0; /* prevents input from forcing the send button off-screen */
   border: none;
   background: transparent;
   padding: 8px 12px;
   font-size: 14px;
   color: var(--text-main);
   outline: none;
+}
+
+.send-btn,
+.file-upload-btn {
+  flex: 0 0 auto;
 }
 .message-input::placeholder {
   color: var(--text-muted);

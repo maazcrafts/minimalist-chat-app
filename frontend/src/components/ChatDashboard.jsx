@@ -4,6 +4,7 @@ import { io } from 'socket.io-client';
 import { Send, UserPlus, LogOut, Users, Image as ImageIcon, X, Check, CheckCheck, CheckCircle, XCircle, ArrowLeft, Mic } from 'lucide-react';
 
 const API_URL = 'https://minimalist-chat-app.onrender.com/api';
+const ORIGIN_URL = 'https://minimalist-chat-app.onrender.com';
 let socket;
 
 const ChatDashboard = ({ user, setUser }) => {
@@ -30,7 +31,9 @@ const ChatDashboard = ({ user, setUser }) => {
   const activeChatRef = useRef(null);
 
   const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
   const fileInputRef = useRef(null);
+  const isAtBottomRef = useRef(true);
 
   useEffect(() => {
     activeChatRef.current = activeChat;
@@ -50,11 +53,19 @@ const ChatDashboard = ({ user, setUser }) => {
       Notification.requestPermission();
     }
 
+    // Load cached lists immediately (prevents empty sidebar on reload)
+    try {
+      const cachedContacts = localStorage.getItem(`chat_contacts_${user.id}`);
+      const cachedGroups = localStorage.getItem(`chat_groups_${user.id}`);
+      if (cachedContacts) setContacts(JSON.parse(cachedContacts));
+      if (cachedGroups) setGroups(JSON.parse(cachedGroups));
+    } catch (_) {}
+
     fetchContacts();
     fetchGroups();
     fetchRequests();
 
-    socket = io('https://minimalist-chat-app.onrender.com');
+    socket = io(ORIGIN_URL);
     socket.emit('join', user.id);
 
     socket.on('receive_message', (msgObj) => {
@@ -111,13 +122,16 @@ const ChatDashboard = ({ user, setUser }) => {
   }, [activeChat]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Auto-scroll only if user is already near bottom (don't steal scroll when browsing history)
+    if (!isAtBottomRef.current) return;
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
   }, [messages]);
 
   const fetchContacts = async () => {
     try {
       const res = await axios.get(`${API_URL}/contacts/${user.id}`);
       setContacts(res.data);
+      try { localStorage.setItem(`chat_contacts_${user.id}`, JSON.stringify(res.data)); } catch (_) {}
     } catch (err) { console.error(err); }
   };
 
@@ -125,6 +139,7 @@ const ChatDashboard = ({ user, setUser }) => {
     try {
       const res = await axios.get(`${API_URL}/groups/${user.id}`);
       setGroups(res.data);
+      try { localStorage.setItem(`chat_groups_${user.id}`, JSON.stringify(res.data)); } catch (_) {}
     } catch (err) { console.error(err); }
   };
 
@@ -139,6 +154,11 @@ const ChatDashboard = ({ user, setUser }) => {
     try {
       const res = await axios.get(`${API_URL}/messages/${user.id}/${chat.id}?isGroup=${chat.is_group ? 'true' : 'false'}`);
       setMessages(res.data);
+      // After loading a chat, jump to bottom once
+      isAtBottomRef.current = true;
+      requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+      });
     } catch (err) { console.error(err); }
   };
 
@@ -162,7 +182,11 @@ const ChatDashboard = ({ user, setUser }) => {
       const res = await axios.post(`${API_URL}/contacts/requests/respond`, { requestId, status });
       setFriendRequests(prev => prev.filter(r => r.request_id !== requestId));
       if (status === 'accepted' && res.data.newContact) {
-        setContacts(prev => [...prev, res.data.newContact]);
+        setContacts(prev => {
+          const next = [...prev, res.data.newContact];
+          try { localStorage.setItem(`chat_contacts_${user.id}`, JSON.stringify(next)); } catch (_) {}
+          return next;
+        });
       }
     } catch (err) { console.error('Failed to respond to request', err); }
   };
@@ -294,6 +318,14 @@ const ChatDashboard = ({ user, setUser }) => {
     setUser(null);
   };
 
+  const handleMessagesScroll = () => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const thresholdPx = 80;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isAtBottomRef.current = distanceFromBottom <= thresholdPx;
+  };
+
   return (
     <div className="app-container">
       <div className="chat-layout">
@@ -406,7 +438,11 @@ const ChatDashboard = ({ user, setUser }) => {
                 <h2>{activeChat.is_group ? activeChat.name : activeChat.username}</h2>
               </div>
 
-              <div className="chat-messages">
+              <div
+                className="chat-messages"
+                ref={messagesContainerRef}
+                onScroll={handleMessagesScroll}
+              >
                 {messages.map((msg, idx) => {
                   const isSentByMe = msg.sender_id === user.id;
                   
