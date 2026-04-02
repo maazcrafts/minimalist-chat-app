@@ -16,7 +16,7 @@ const ChatDashboard = ({ user, setUser }) => {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [addFriendUsername, setAddFriendUsername] = useState('');
-  
+
   // Voice Recording
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef(null);
@@ -125,7 +125,7 @@ const ChatDashboard = ({ user, setUser }) => {
       const a = audioRef.current;
       if (!a) return;
       if (a.paused) {
-        try { await a.play(); } catch (_) {}
+        try { await a.play(); } catch (_) { }
       } else {
         a.pause();
       }
@@ -194,7 +194,7 @@ const ChatDashboard = ({ user, setUser }) => {
       const cachedGroups = localStorage.getItem(`chat_groups_${user.id}`);
       if (cachedContacts) setContacts(JSON.parse(cachedContacts));
       if (cachedGroups) setGroups(JSON.parse(cachedGroups));
-    } catch (_) {}
+    } catch (_) { }
 
     fetchContacts();
     fetchGroups();
@@ -202,7 +202,7 @@ const ChatDashboard = ({ user, setUser }) => {
 
     axios.get(`${ORIGIN_URL}/api/system/info`).then((res) => {
       setSystemUser(res.data);
-    }).catch(() => {});
+    }).catch(() => { });
 
     socket = io(ORIGIN_URL);
     socket.emit('join', user.id);
@@ -210,21 +210,21 @@ const ChatDashboard = ({ user, setUser }) => {
     socket.on('receive_message', (msgObj) => {
       const isCurrentChat = activeChatRef.current && (
         (msgObj.group_id && activeChatRef.current.is_group && activeChatRef.current.id === msgObj.group_id) ||
-        (!msgObj.group_id && !activeChatRef.current?.is_group && 
+        (!msgObj.group_id && !activeChatRef.current?.is_group &&
           (activeChatRef.current.id === msgObj.sender_id || activeChatRef.current.id === msgObj.receiver_id))
       );
 
       if (isCurrentChat) {
         setMessages((prev) => [...prev, msgObj]);
         if (!msgObj.group_id && socket) {
-           socket.emit('mark_read', { userId: user.id, friendId: msgObj.sender_id });
+          socket.emit('mark_read', { userId: user.id, friendId: msgObj.sender_id });
         }
       } else {
         const title = msgObj.group_id ? `New message in Group` : `New message from ${msgObj.sender_username || 'Friend'}`;
         if (Notification.permission === 'granted') {
           new Notification(title, { body: msgObj.type === 'image' ? '[Image]' : (msgObj.type === 'audio' ? '[Voice Message]' : msgObj.content) });
         }
-        
+
         const key = msgObj.group_id ? `group_${msgObj.group_id}` : `user_${msgObj.sender_id}`;
         setUnreadCounts(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
       }
@@ -290,7 +290,7 @@ const ChatDashboard = ({ user, setUser }) => {
       const base = res.data || [];
       const adminContact = systemUser ? [{ id: systemUser.id, username: 'Announcements', is_system: true }, ...base] : base;
       setContacts(adminContact);
-      try { localStorage.setItem(`chat_contacts_${user.id}`, JSON.stringify(res.data)); } catch (_) {}
+      try { localStorage.setItem(`chat_contacts_${user.id}`, JSON.stringify(res.data)); } catch (_) { }
     } catch (err) { console.error(err); }
   };
 
@@ -298,7 +298,7 @@ const ChatDashboard = ({ user, setUser }) => {
     try {
       const res = await axios.get(`${API_URL}/groups/${user.id}`);
       setGroups(res.data);
-      try { localStorage.setItem(`chat_groups_${user.id}`, JSON.stringify(res.data)); } catch (_) {}
+      try { localStorage.setItem(`chat_groups_${user.id}`, JSON.stringify(res.data)); } catch (_) { }
     } catch (err) { console.error(err); }
   };
 
@@ -343,7 +343,7 @@ const ChatDashboard = ({ user, setUser }) => {
       if (status === 'accepted' && res.data.newContact) {
         setContacts(prev => {
           const next = [...prev, res.data.newContact];
-          try { localStorage.setItem(`chat_contacts_${user.id}`, JSON.stringify(next)); } catch (_) {}
+          try { localStorage.setItem(`chat_contacts_${user.id}`, JSON.stringify(next)); } catch (_) { }
           return next;
         });
       }
@@ -362,7 +362,7 @@ const ChatDashboard = ({ user, setUser }) => {
       });
       setGroups((prev) => [...prev, res.data]);
       socket.emit('join_new_group', res.data.id);
-      
+
       setShowGroupModal(false);
       setNewGroupName('');
       setSelectedContacts([]);
@@ -383,7 +383,7 @@ const ChatDashboard = ({ user, setUser }) => {
   const handleSendMessage = (e, customPayload) => {
     if (e) e.preventDefault();
     if (!activeChat) return;
-    
+
     const content = customPayload?.content || newMessage.trim();
     const type = customPayload?.type || 'text';
     const imageUrl = customPayload?.imageUrl || null;
@@ -444,7 +444,7 @@ const ChatDashboard = ({ user, setUser }) => {
       const res = await axios.post(`${API_URL}/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      
+
       handleSendMessage(null, {
         content: '',
         imageUrl: res.data.url,
@@ -618,8 +618,8 @@ const ChatDashboard = ({ user, setUser }) => {
     const t = msg.reply_to_type || 'text';
     const label =
       t === 'image' ? '[Image]' :
-      t === 'audio' ? '[Voice message]' :
-      (msg.reply_to_content || '');
+        t === 'audio' ? '[Voice message]' :
+          (msg.reply_to_content || '');
     return (
       <div className="reply-quote">
         <div className="reply-quote-header">
@@ -637,10 +637,13 @@ const ChatDashboard = ({ user, setUser }) => {
         <div className={`sidebar ${activeChat ? 'mobile-hidden' : ''}`}>
           <div className="sidebar-header">
             <div className="sidebar-header-actions">
-              <div className="avatar" style={{width: 32, height: 32, fontSize: 14}}>
+              <div className="avatar" style={{ width: 32, height: 32, fontSize: 14 }}>
                 {user.username.charAt(0).toUpperCase()}
               </div>
-              <h2>MaazX</h2>
+              <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
+                <span style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '1.5px', textTransform: 'uppercase' }}>MaazX</span>
+                <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-main)' }}>{user.username}</span>
+              </div>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               {(user.username === 'maaz_khan' || user.role === 'admin') && (
@@ -653,10 +656,10 @@ const ChatDashboard = ({ user, setUser }) => {
               </button>
             </div>
           </div>
-          
+
           <form className="add-friend-form" onSubmit={handleAddFriend}>
-            <input 
-              type="text" 
+            <input
+              type="text"
               className="add-friend-input"
               placeholder="Add by username..."
               value={addFriendUsername}
@@ -669,7 +672,7 @@ const ChatDashboard = ({ user, setUser }) => {
 
           <div className="section-header">
             <span>GROUPS & DIRECT</span>
-            <button className="logout-btn" onClick={() => setShowGroupModal(true)} style={{padding: '4px', margin: 0}} title="Create Group">
+            <button className="logout-btn" onClick={() => setShowGroupModal(true)} style={{ padding: '4px', margin: 0 }} title="Create Group">
               <Users size={14} />
             </button>
           </div>
@@ -679,19 +682,19 @@ const ChatDashboard = ({ user, setUser }) => {
               <div className="request-list">
                 {friendRequests.map(req => (
                   <div key={req.request_id} className="request-item">
-                    <div style={{fontSize: 13, color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: 6}}>
-                       <div className="avatar" style={{width: 24, height: 24, fontSize: 10}}>{req.sender_username.charAt(0).toUpperCase()}</div>
-                       <span><strong style={{color: 'var(--text-main)'}}>{req.sender_username}</strong> wants to connect</span>
+                    <div style={{ fontSize: 13, color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <div className="avatar" style={{ width: 24, height: 24, fontSize: 10 }}>{req.sender_username.charAt(0).toUpperCase()}</div>
+                      <span><strong style={{ color: 'var(--text-main)' }}>{req.sender_username}</strong> wants to connect</span>
                     </div>
                     <div className="request-actions">
-                      <button className="request-btn accept" onClick={() => handleRespondRequest(req.request_id, 'accepted')}><CheckCircle size={14} style={{display:'inline', verticalAlign:'middle', marginRight: 4}}/> Accept</button>
-                      <button className="request-btn reject" onClick={() => handleRespondRequest(req.request_id, 'rejected')}><XCircle size={14} style={{display:'inline', verticalAlign:'middle', marginRight: 4}}/> Reject</button>
+                      <button className="request-btn accept" onClick={() => handleRespondRequest(req.request_id, 'accepted')}><CheckCircle size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} /> Accept</button>
+                      <button className="request-btn reject" onClick={() => handleRespondRequest(req.request_id, 'rejected')}><XCircle size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} /> Reject</button>
                     </div>
                   </div>
                 ))}
               </div>
             )}
-            
+
             {contacts.length === 0 && groups.length === 0 ? (
               <div className="empty-state">No contacts yet. Add a friend to start chatting!</div>
             ) : (
@@ -699,8 +702,8 @@ const ChatDashboard = ({ user, setUser }) => {
                 {groups.map(group => {
                   const unread = unreadCounts[`group_${group.id}`] || 0;
                   return (
-                    <div 
-                      key={`g_${group.id}`} 
+                    <div
+                      key={`g_${group.id}`}
                       className={`contact-item ${activeChat?.id === group.id && activeChat?.is_group ? 'active' : ''}`}
                       onClick={() => setActiveChat(group)}
                     >
@@ -716,8 +719,8 @@ const ChatDashboard = ({ user, setUser }) => {
                 {contacts.map(contact => {
                   const unread = unreadCounts[`user_${contact.id}`] || 0;
                   return (
-                    <div 
-                      key={`c_${contact.id}`} 
+                    <div
+                      key={`c_${contact.id}`}
                       className={`contact-item ${activeChat?.id === contact.id && !activeChat?.is_group ? 'active' : ''}`}
                       onClick={() => setActiveChat(contact)}
                     >
@@ -732,7 +735,7 @@ const ChatDashboard = ({ user, setUser }) => {
               </>
             )}
           </div>
-          <div style={{ padding: '15px', textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)', borderTop: '1px solid var(--border-color)'}}>
+          <div style={{ padding: '15px', textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)', borderTop: '1px solid var(--border-color)' }}>
             Created by Maaz
           </div>
         </div>
@@ -744,7 +747,7 @@ const ChatDashboard = ({ user, setUser }) => {
                 <button className="mobile-back-btn" onClick={() => setActiveChat(null)}>
                   <ArrowLeft size={20} />
                 </button>
-                <div className={`avatar ${activeChat.is_group ? 'group' : ''}`} style={{width: 36, height: 36, fontSize: 16}}>
+                <div className={`avatar ${activeChat.is_group ? 'group' : ''}`} style={{ width: 36, height: 36, fontSize: 16 }}>
                   {activeChat.is_group ? <Users size={18} /> : (activeChat.username ? activeChat.username.charAt(0).toUpperCase() : '')}
                 </div>
                 <h2>{activeChat.is_group ? activeChat.name : activeChat.username}</h2>
@@ -757,7 +760,7 @@ const ChatDashboard = ({ user, setUser }) => {
               >
                 {messages.map((msg, idx) => {
                   const isSentByMe = msg.sender_id === user.id;
-                  
+
                   if (activeChat.is_group && msg.group_id !== activeChat.id) return null;
                   if (!activeChat.is_group && msg.group_id) return null;
                   if (!activeChat.is_group && !isSentByMe && msg.sender_id !== activeChat.id) return null;
@@ -766,7 +769,7 @@ const ChatDashboard = ({ user, setUser }) => {
                     <div
                       key={msg.id || idx}
                       className={`message ${isSentByMe ? 'sent' : 'received'}`}
-                      style={(msg.type === 'image' || msg.type === 'audio') ? {background: 'transparent', padding: 0, border: 'none'} : {}}
+                      style={(msg.type === 'image' || msg.type === 'audio') ? { background: 'transparent', padding: 0, border: 'none' } : {}}
                       onContextMenu={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
@@ -793,15 +796,15 @@ const ChatDashboard = ({ user, setUser }) => {
                       {!isSentByMe && activeChat.is_group && msg.type !== 'image' && msg.type !== 'audio' && (
                         <div className="sender-name">{msg.sender_username}</div>
                       )}
-                      
+
                       {msg.type === 'audio' ? (
                         <div>
-                          {!isSentByMe && activeChat.is_group && <div className="sender-name" style={{color: 'var(--text-muted)'}}>{msg.sender_username}</div>}
+                          {!isSentByMe && activeChat.is_group && <div className="sender-name" style={{ color: 'var(--text-muted)' }}>{msg.sender_username}</div>}
                           <AudioPlayer src={normalizeMediaUrl(msg.image_url)} compact />
                         </div>
                       ) : msg.type === 'image' ? (
                         <div>
-                          {!isSentByMe && activeChat.is_group && <div className="sender-name" style={{color: 'var(--text-muted)'}}>{msg.sender_username}</div>}
+                          {!isSentByMe && activeChat.is_group && <div className="sender-name" style={{ color: 'var(--text-muted)' }}>{msg.sender_username}</div>}
                           <img
                             src={normalizeMediaUrl(msg.image_url)}
                             alt="Shared"
@@ -819,7 +822,7 @@ const ChatDashboard = ({ user, setUser }) => {
                         </>
                       )}
 
-                      <div className="message-time-status" style={{justifyContent: isSentByMe ? 'flex-end' : 'flex-start'}}>
+                      <div className="message-time-status" style={{ justifyContent: isSentByMe ? 'flex-end' : 'flex-start' }}>
                         {msg.timestamp ? formatTime(msg.timestamp) : ''}
                         {!msg.group_id && isSentByMe && (
                           <span className={`receipt receipt-${msg.status || 'sent'}`} title={msg.status || 'sent'}>
@@ -904,36 +907,36 @@ const ChatDashboard = ({ user, setUser }) => {
                   <button type="button" className="file-upload-btn" onClick={() => fileInputRef.current?.click()}>
                     <ImageIcon size={20} />
                   </button>
-                  <input 
-                    type="file" 
-                    accept="image/*,audio/*" 
-                    style={{display: 'none'}} 
-                    ref={fileInputRef} 
+                  <input
+                    type="file"
+                    accept="image/*,audio/*"
+                    style={{ display: 'none' }}
+                    ref={fileInputRef}
                     onChange={handleFileUpload}
                   />
 
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     className="message-input"
                     placeholder="Message..."
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
                   />
-                  
+
                   <button
                     type="button"
                     className="file-upload-btn"
                     title={isRecording ? 'Stop recording' : 'Start recording'}
-                    style={{color: isRecording ? '#ef4444' : 'var(--text-muted)'}}
+                    style={{ color: isRecording ? '#ef4444' : 'var(--text-muted)' }}
                     onClick={() => (isRecording ? stopRecording() : startRecording())}
                     disabled={!!recordedAudioBlob && !recordedAudioUrl}
                   >
                     <Mic size={20} />
                   </button>
 
-                  <button 
-                    type="submit" 
-                    className="send-btn" 
+                  <button
+                    type="submit"
+                    className="send-btn"
                     disabled={!newMessage.trim() && !recordedAudioBlob}
                   >
                     <Send size={16} />
@@ -942,7 +945,7 @@ const ChatDashboard = ({ user, setUser }) => {
               </div>
             </>
           ) : (
-            <div style={{display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)'}}>
+            <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
               Select a friend or group to start chatting
             </div>
           )}
@@ -1038,8 +1041,8 @@ const ChatDashboard = ({ user, setUser }) => {
             <form onSubmit={handleCreateGroup}>
               <div className="form-group">
                 <label>Group Name</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   className="form-input"
                   value={newGroupName}
                   onChange={e => setNewGroupName(e.target.value)}
@@ -1051,14 +1054,14 @@ const ChatDashboard = ({ user, setUser }) => {
                 <label>Select Friends</label>
                 <div className="multi-select-list">
                   {contacts.length === 0 ? (
-                    <div style={{padding: 15, fontSize: 13, color: 'var(--text-muted)'}}>No friends added yet.</div>
+                    <div style={{ padding: 15, fontSize: 13, color: 'var(--text-muted)' }}>No friends added yet.</div>
                   ) : (
                     contacts.map(contact => (
                       <div key={contact.id} className="select-item" onClick={() => toggleContactSelection(contact.id)}>
-                        <div style={{width: '20px', height: '20px', borderRadius: '4px', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', background: selectedContacts.includes(contact.id) ? 'var(--primary)' : 'transparent'}}>
-                           {selectedContacts.includes(contact.id) && <Check size={14} color="white" />}
+                        <div style={{ width: '20px', height: '20px', borderRadius: '4px', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', background: selectedContacts.includes(contact.id) ? 'var(--primary)' : 'transparent' }}>
+                          {selectedContacts.includes(contact.id) && <Check size={14} color="white" />}
                         </div>
-                        <span style={{fontSize: 14}}>{contact.username}</span>
+                        <span style={{ fontSize: 14 }}>{contact.username}</span>
                       </div>
                     ))
                   )}
