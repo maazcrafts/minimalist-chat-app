@@ -1,121 +1,119 @@
-const Database = require('better-sqlite3');
-const path = require('path');
-const fs = require('fs');
+const { Pool } = require('pg');
 
-// Prefer a persistent disk path on Render (if configured), otherwise fallback to project dir.
-// Render persistent disks are commonly mounted under /var/data (Linux). Use DB_PATH to override.
-const defaultPersistentDir =
-  process.platform !== 'win32'
-    ? (process.env.RENDER_DISK_PATH || '/var/data')
-    : path.resolve(__dirname);
+const DATABASE_URL = 'postgresql://postgres:Maaz_khan0459@db.ngmxrdnscopofiihveet.supabase.co:5432/postgres';
 
-const dbFilePath = process.env.DB_PATH
-  ? path.resolve(process.env.DB_PATH)
-  : path.resolve(defaultPersistentDir, 'chat.db');
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
 
-try {
-  fs.mkdirSync(path.dirname(dbFilePath), { recursive: true });
-} catch (_) {}
+async function initDb() {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-const db = new Database(dbFilePath, { verbose: console.log });
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id BIGSERIAL PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        role TEXT DEFAULT 'user',
+        banned BOOLEAN DEFAULT FALSE,
+        last_seen TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
 
-console.log('Connected to the SQLite database.');
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS contacts (
+        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        friend_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        PRIMARY KEY (user_id, friend_id)
+      );
+    `);
 
-db.pragma('journal_mode = WAL');
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS groups (
+        id BIGSERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
 
-db.exec(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    role TEXT DEFAULT 'user',
-    banned INTEGER DEFAULT 0,
-    last_seen DATETIME,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-)`);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS group_members (
+        group_id BIGINT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        PRIMARY KEY (group_id, user_id)
+      );
+    `);
 
-db.exec(`CREATE TABLE IF NOT EXISTS contacts (
-    user_id INTEGER,
-    friend_id INTEGER,
-    PRIMARY KEY (user_id, friend_id),
-    FOREIGN KEY (user_id) REFERENCES users (id),
-    FOREIGN KEY (friend_id) REFERENCES users (id)
-)`);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id BIGSERIAL PRIMARY KEY,
+        sender_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+        receiver_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+        group_id BIGINT REFERENCES groups(id) ON DELETE SET NULL,
+        content TEXT,
+        image_url TEXT,
+        type TEXT DEFAULT 'text',
+        reply_to_id BIGINT,
+        reply_to_type TEXT,
+        reply_to_content TEXT,
+        reply_to_image_url TEXT,
+        reply_to_sender_username TEXT,
+        status TEXT DEFAULT 'sent',
+        timestamp TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
 
-db.exec(`CREATE TABLE IF NOT EXISTS groups (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    created_by INTEGER,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (created_by) REFERENCES users (id)
-)`);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_messages_group_ts ON messages(group_id, timestamp);
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_messages_dm_ts ON messages(sender_id, receiver_id, timestamp);
+    `);
 
-db.exec(`CREATE TABLE IF NOT EXISTS group_members (
-    group_id INTEGER,
-    user_id INTEGER,
-    PRIMARY KEY (group_id, user_id),
-    FOREIGN KEY (group_id) REFERENCES groups (id),
-    FOREIGN KEY (user_id) REFERENCES users (id)
-)`);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS message_reactions (
+        message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        emoji TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        PRIMARY KEY (message_id, user_id, emoji)
+      );
+    `);
 
-db.exec(`CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    sender_id INTEGER,
-    receiver_id INTEGER,
-    group_id INTEGER,
-    content TEXT,
-    image_url TEXT,
-    type TEXT DEFAULT 'text',
-    reply_to_id INTEGER,
-    reply_to_type TEXT,
-    reply_to_content TEXT,
-    reply_to_image_url TEXT,
-    reply_to_sender_username TEXT,
-    status TEXT DEFAULT 'sent',
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (sender_id) REFERENCES users (id),
-    FOREIGN KEY (receiver_id) REFERENCES users (id),
-    FOREIGN KEY (group_id) REFERENCES groups (id)
-)`);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS friend_requests (
+        id BIGSERIAL PRIMARY KEY,
+        sender_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        receiver_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        status TEXT DEFAULT 'pending',
+        timestamp TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(sender_id, receiver_id)
+      );
+    `);
 
-db.exec(`CREATE TABLE IF NOT EXISTS message_reactions (
-    message_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    emoji TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (message_id, user_id, emoji),
-    FOREIGN KEY (message_id) REFERENCES messages (id) ON DELETE CASCADE,
-    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
-)`);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      );
+    `);
 
-db.exec(`CREATE TABLE IF NOT EXISTS friend_requests (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    sender_id INTEGER,
-    receiver_id INTEGER,
-    status TEXT DEFAULT 'pending',
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (sender_id) REFERENCES users (id),
-    FOREIGN KEY (receiver_id) REFERENCES users (id),
-    UNIQUE(sender_id, receiver_id)
-)`);
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
 
-db.exec(`CREATE TABLE IF NOT EXISTS app_settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-)`);
+async function query(text, params) {
+  return pool.query(text, params);
+}
 
-// Apply migrations for new columns gracefully (ignoring duplicate column errors)
-try { db.exec("ALTER TABLE messages ADD COLUMN group_id INTEGER"); } catch (e) {}
-try { db.exec("ALTER TABLE messages ADD COLUMN image_url TEXT"); } catch (e) {}
-try { db.exec("ALTER TABLE messages ADD COLUMN type TEXT DEFAULT 'text'"); } catch (e) {}
-try { db.exec("ALTER TABLE messages ADD COLUMN status TEXT DEFAULT 'sent'"); } catch (e) {}
-try { db.exec("ALTER TABLE messages ADD COLUMN reply_to_id INTEGER"); } catch (e) {}
-try { db.exec("ALTER TABLE messages ADD COLUMN reply_to_type TEXT"); } catch (e) {}
-try { db.exec("ALTER TABLE messages ADD COLUMN reply_to_content TEXT"); } catch (e) {}
-try { db.exec("ALTER TABLE messages ADD COLUMN reply_to_image_url TEXT"); } catch (e) {}
-try { db.exec("ALTER TABLE messages ADD COLUMN reply_to_sender_username TEXT"); } catch (e) {}
-try { db.exec("ALTER TABLE users ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP"); } catch (e) {}
-try { db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'"); } catch (e) {}
-try { db.exec("ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0"); } catch (e) {}
-try { db.exec("ALTER TABLE users ADD COLUMN last_seen DATETIME"); } catch (e) {}
-
-module.exports = db;
+module.exports = { pool, query, initDb };

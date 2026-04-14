@@ -204,7 +204,7 @@ const ChatDashboard = ({ user, setUser }) => {
       setSystemUser(res.data);
     }).catch(() => { });
 
-    socket = io(ORIGIN_URL);
+    socket = io(ORIGIN_URL, { auth: { token: user.token } });
     socket.emit('join', user.id);
 
     socket.on('receive_message', (msgObj) => {
